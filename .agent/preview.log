@@ -1,0 +1,22 @@
+
+> tauri-app@0.1.0 dev
+> vite
+
+
+  VITE v7.3.2  ready in 204 ms
+
+  ➜  Local:   http://localhost:1420/
+  ➜  press h + enter to show help
+5:00:41 PM [vite] (client) hmr update /src/components/Layout.tsx, /src/index.css
+5:00:49 PM [vite] (client) hmr update /src/pages/Configuracoes.tsx, /src/index.css
+5:05:21 PM [vite] (client) hmr update /src/components/Layout.tsx, /src/index.css
+5:10:40 PM [vite] (client) hmr update /src/components/Layout.tsx, /src/index.css
+5:10:48 PM [vite] (client) hmr update /src/components/Layout.tsx, /src/index.css
+5:15:14 PM [vite] (client) hmr update /src/components/Layout.tsx, /src/index.css
+5:15:26 PM [vite] (client) hmr update /src/pages/PDV.tsx, /src/index.css
+5:18:57 PM [vite] (client) hmr update /src/components/Layout.tsx, /src/index.css
+5:37:55 PM [vite] (client) hmr update /src/pages/PDV.tsx, /src/index.css
+5:40:01 PM [vite] (client) hmr update /src/components/Layout.tsx, /src/index.css
+7:43:28 PM [vite] (client) hmr update /src/components/Layout.tsx, /src/index.css
+7:43:55 PM [vite] (client) hmr update /src/pages/Produtos.tsx, /src/index.css
+7:44:07 PM [vite] (client) hmr update /src/pages/Lotes.tsx, /src/index.css

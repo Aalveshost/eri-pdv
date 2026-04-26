@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(node -e \"const {PDFParse} = require\\(''pdf-parse''\\); const p = new PDFParse\\(\\); console.log\\(typeof p.pdf\\)\")",
+      "Bash(curl -s http://localhost:3001/status)",
+      "Bash(curl -s -X POST http://localhost:3001/send-boletos -H \"Content-Type: application/json\" -d '{\"\"phone\"\":\"\"11999514289\"\",\"\"boletos\"\":[{\"\"url\"\":\"\"https://www.bling.com.br/doc.view.php?id=96094e4ad9ff7ad9e506a576e46968f494a5ee5f68901d7ccf21a40c2ddb21ee\"\"}]}')",
+      "Bash(pkill -f \"node server.js\")"
+    ]
+  }
+}
