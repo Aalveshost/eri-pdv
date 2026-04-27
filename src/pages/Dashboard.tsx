@@ -1,7 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import { useNavigate } from "react-router-dom";
 import {
-  TrendingUp, Package, AlertTriangle, Calendar,
+  TrendingUp, Package, AlertTriangle,
   ChevronRight, DollarSign, Trophy, X, Search, Clock
 } from "lucide-react";
 import { createPortal } from "react-dom";
@@ -208,7 +207,7 @@ function PopupTodosProduzidos({ db, defaultInicio, defaultFim, onClose }: any) {
 
 // ════════════════════════════════════════════════════════════════════════════
 export default function Dashboard() {
-  const { db } = useDatabase(); const navigate = useNavigate();
+  const { db } = useDatabase();
   const [stats, setStats] = useState({ vendasHoje: 0, lucroHoje: 0, totalEstoque: 0, itensVencendo: 0 });
   const [producaoLista, setProducaoLista] = useState<ProducaoItem[]>([]);
   const [prodIni, setProdIni] = useState(isoToBr(getTodayIso())); const [prodFim, setProdFim] = useState(isoToBr(getTodayIso()));

@@ -1,6 +1,5 @@
 import { useState, useEffect, useRef, Fragment } from "react";
-import { Plus, Calendar, Package, TrendingUp, X, Edit2, Trash2, ArrowRight, Search, AlertTriangle } from "lucide-react";
-import { createPortal } from "react-dom";
+import { Plus, Package, TrendingUp, Edit2, Trash2, Search, AlertTriangle } from "lucide-react";
 import { useDatabase } from "../hooks/useDatabase";
 import Modal from "../components/Modal";
 import { cn } from "../utils/cn";
@@ -152,7 +151,7 @@ export default function ProducaoPage() {
   const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({});
   const [selectedDate, setSelectedDate] = useState(new Date().toLocaleDateString('sv-SE'));
   const [activeId, setActiveId] = useState<string | null>(null);
-  const [inputActive, setInputActive] = useState(false);
+  const [inputActive, _setInputActive] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedProd, setSelectedProd] = useState<Produto | null>(null);
   const [showResults, setShowResults] = useState(false);

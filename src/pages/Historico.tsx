@@ -180,7 +180,6 @@ export default function Historico() {
   const tabPrazoRef = useRef<HTMLButtonElement>(null);
   const rowRefs = useRef<(HTMLElement | null)[]>([]);
 
-  const currentList = activeTab === 'todas' ? vendas : vendasPrazo;
 
   const load = useCallback(async () => {
     if (!db) return;

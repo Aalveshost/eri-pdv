@@ -641,8 +641,8 @@ function TelaClientes({ db, onVerConta, autoFocusClienteId }: { db: any; onVerCo
               const active = document.activeElement as HTMLElement;
               const inputs = Array.from(e.currentTarget.querySelectorAll<HTMLElement>('input'));
               const buttons = Array.from(e.currentTarget.querySelectorAll<HTMLElement>('button[type="button"], button[type="submit"]'));
-              const salvarBtn = buttons.find(b => b.type === 'submit') ?? buttons[buttons.length - 1];
-              const cancelarBtn = buttons.find(b => b.type === 'button') ?? buttons[0];
+              const salvarBtn = buttons.find(b => (b as HTMLButtonElement).type === 'submit') ?? buttons[buttons.length - 1];
+              const cancelarBtn = buttons.find(b => (b as HTMLButtonElement).type === 'button') ?? buttons[0];
               const inInput = inputs.includes(active);
               const inButton = buttons.includes(active);
               const inputIdx = inputs.indexOf(active);
@@ -823,7 +823,7 @@ function TelaConta({ db, cliente, onVoltar, autoFocusItems }: { db: any; cliente
   // Estados para Modal Editar Item
   const [eiField, setEiField] = useState<'produto' | 'quantidade' | 'valor' | 'btns'>('produto');
   const [eiBtnFocus, setEiBtnFocus] = useState<0 | 1>(1); // 0=Cancelar, 1=Salvar
-  const [_eiInputActive, setEiInputActive] = useState(false);
+  const [_eiInputActive, _setEiInputActive] = useState(false);
 
   const eiProdutoRef = useRef<HTMLInputElement>(null);
   const eiQuantidadeRef = useRef<HTMLInputElement>(null);
