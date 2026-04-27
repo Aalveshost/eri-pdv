@@ -266,6 +266,7 @@ export default function Produtos() {
           "INSERT INTO produtos (nome, codigo_barras, preco_venda, preco_custo, ativo) VALUES ($1, $2, $3, $4, $5)",
           [normalizedNome, form.codigo_barras || null, pVenda, pCusto, form.ativo]
         );
+      }
       console.log("handleSave: Sucesso!");
       setIsModalOpen(false);
       setEditingProduto(null);
