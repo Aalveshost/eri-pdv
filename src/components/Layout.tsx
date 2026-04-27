@@ -301,6 +301,15 @@ export default function Layout({ children }: { children: React.ReactNode }) {
             <div 
               className="glass-card w-full max-w-sm p-8 border-luxury-orange/20 shadow-2xl"
               onClick={e => e.stopPropagation()}
+              onKeyDown={e => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  passwordInputRef.current?.focus();
+                  const val = passwordInputRef.current?.value || "";
+                  passwordInputRef.current?.setSelectionRange(val.length, val.length);
+                }
+              }}
             >
               <div className="flex flex-col items-center text-center mb-8">
                 <div className="w-16 h-16 bg-luxury-orange/10 rounded-full flex items-center justify-center mb-4 border border-luxury-orange/20">
@@ -339,6 +348,9 @@ export default function Layout({ children }: { children: React.ReactNode }) {
                       if (e.key === 'Enter') {
                         e.preventDefault();
                         e.stopPropagation();
+                        passwordInputRef.current?.focus();
+                        const val = passwordInputRef.current?.value || "";
+                        passwordInputRef.current?.setSelectionRange(val.length, val.length);
                         return;
                       }
 
