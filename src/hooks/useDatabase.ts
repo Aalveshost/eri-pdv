@@ -13,7 +13,7 @@ CREATE TABLE IF NOT EXISTS configuracoes (
     senha TEXT DEFAULT '1234'
 );
 
-INSERT OR IGNORE INTO configuracoes (id, dias_alerta_validade, nome_loja, senha) VALUES (1, 5, 'Salgados Pro', '1234');
+INSERT OR IGNORE INTO configuracoes (id, dias_alerta_validade, nome_loja) VALUES (1, 5, 'Salgados Pro');
 
 CREATE TABLE IF NOT EXISTS produtos (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -141,15 +141,8 @@ export function useDatabase() {
         initPromise = (async () => {
           console.log("useDatabase: Chamando Database.load...");
           const _db = await Database.load("sqlite:salgados.db");
-          console.log("useDatabase: Database.load sucesso!");
           
-          // Split schema by semicolon and execute each statement
-          const statements = SCHEMA.split(';').filter(s => s.trim().length > 0);
-          for (const s of statements) {
-            await _db.execute(s);
-          }
-          
-          // Migrations
+          // 1. Migrations FIRST to ensure columns exist
           const migrations = [
             "ALTER TABLE produtos ADD COLUMN preco_custo REAL DEFAULT 0",
             "ALTER TABLE configuracoes ADD COLUMN frequencia_backup_dias INTEGER DEFAULT 7",
@@ -163,9 +156,15 @@ export function useDatabase() {
           ];
 
           for (const m of migrations) {
-            try { await _db.execute(m); } catch (e) { /* ignore */ }
+            try { await _db.execute(m); } catch (e) { /* ignore if already exists */ }
           }
 
+          // 2. Then execute main schema
+          const statements = SCHEMA.split(';').filter(s => s.trim().length > 0);
+          for (const s of statements) {
+            await _db.execute(s);
+          }
+          
           dbInstance = _db;
           return _db;
         })();
