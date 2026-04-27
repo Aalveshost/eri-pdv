@@ -321,7 +321,28 @@ export default function Layout({ children }: { children: React.ReactNode }) {
                         verifyPassword(val);
                       }
                     }}
-                    onKeyDown={e => { if (e.key === 'Escape') setShowPasswordModal(false); }}
+                    onKeyDown={e => { 
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        verifyPassword(passwordInput);
+                      }
+                      if (e.key === 'Escape') {
+                        e.preventDefault();
+                        setShowPasswordModal(false);
+                        const isConfig = pendingPath === '/config';
+                        setPendingPath(null);
+                        
+                        // Smart focus return
+                        setTimeout(() => {
+                          const links = Array.from(document.querySelectorAll('aside nav a')) as HTMLElement[];
+                          if (isConfig) {
+                            links[5]?.focus(); // HISTORICO
+                          } else {
+                            links[0]?.focus(); // VENDA
+                          }
+                        }, 50);
+                      }
+                    }}
                   />
                   <div className="absolute left-4 top-1/2 -translate-y-1/2 text-white/20">
                     <Lock size={18} />
