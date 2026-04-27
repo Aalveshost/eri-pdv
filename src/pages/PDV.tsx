@@ -6,9 +6,28 @@ import {
 } from "lucide-react";
 import { createPortal } from "react-dom";
 import { useDatabase } from "../hooks/useDatabase";
-import { formatCurrency, formatDateBR, isValidBrDate } from "../utils/formatters";
+import { formatCurrency } from "../utils/currency";
 import { processarVendaFIFO } from "../utils/fifoEngine";
 import { invoke } from "@tauri-apps/api/core";
+
+// ─── helpers de data ────────────────────────────────────────────────
+function formatDateBR(date: Date): string {
+  const d = String(date.getDate()).padStart(2, '0');
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const y = date.getFullYear();
+  return `${d}/${m}/${y}`;
+}
+
+function isValidBrDate(br: string): boolean {
+  const parts = br.split('/');
+  if (parts.length !== 3) return false;
+  const d = parseInt(parts[0]);
+  const m = parseInt(parts[1]);
+  const y = parseInt(parts[2]);
+  if (isNaN(d) || isNaN(m) || isNaN(y)) return false;
+  const date = new Date(y, m - 1, d);
+  return date.getFullYear() === y && date.getMonth() === m - 1 && date.getDate() === d;
+}
 
 // Temporary global to avoid circular dependencies if needed, or just standard state
 export let pdvModalOpen = false;
