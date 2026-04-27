@@ -54,14 +54,22 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   }, [location.pathname]);
 
   const handleProtectedNavigation = (path: string) => {
-    if (path === "/" || isUnlocked) {
-      navigate(path);
+    // If going to PDV, just go
+    if (path === "/") {
+      navigate("/");
       return;
     }
-    setPendingPath(path);
-    setShowPasswordModal(true);
-    setPasswordInput("");
-    setPasswordError(false);
+    
+    // Always ask password for Config, OR ask if system is locked for other protected pages
+    if (path === "/config" || !isUnlocked) {
+      setPendingPath(path);
+      setShowPasswordModal(true);
+      setPasswordInput("");
+      setPasswordError(false);
+      return;
+    }
+
+    navigate(path);
   };
 
   useEffect(() => {
