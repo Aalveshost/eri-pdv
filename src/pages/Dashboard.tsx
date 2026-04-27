@@ -143,7 +143,7 @@ function DateInput({
       maxLength={10}
       disabled={disabled}
       className={cn(
-        "luxury-input h-9 text-[11px] w-[110px] text-center font-mono tracking-widest outline-none transition-all",
+        "luxury-input h-9 text-[11px] w-[130px] text-center font-mono tracking-widest outline-none transition-all",
         highlighted ? "border-luxury-orange ring-1 ring-luxury-orange/50 bg-luxury-orange/5" : "opacity-80"
       )}
     />
