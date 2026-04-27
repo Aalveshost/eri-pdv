@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Save, Database, Folder, RefreshCw, Upload, Lock, Eye, EyeOff } from "lucide-react";
 import { useDatabase } from "../hooks/useDatabase";
 import { invoke } from "@tauri-apps/api/core";
@@ -11,10 +11,49 @@ export default function Configuracoes() {
     dias_alerta_validade: 5,
     caminho_backup_externo: "",
     nome_loja: "Salgados Pro",
-    frequencia_backup_dias: 7,
     senha: "1234"
   });
   const [showPassword, setShowPassword] = useState(false);
+
+  const fNomeRef = useRef<HTMLInputElement>(null);
+  const fSenhaRef = useRef<HTMLInputElement>(null);
+  const fCaminhoRef = useRef<HTMLInputElement>(null);
+  const fFreqRef = useRef<HTMLSelectElement>(null);
+  const fBackupBtnRef = useRef<HTMLButtonElement>(null);
+  const fImportBtnRef = useRef<HTMLButtonElement>(null);
+  const fSalvarBtnRef = useRef<HTMLButtonElement>(null);
+
+  const navMap: Record<string, { up?: React.RefObject<any>; down?: React.RefObject<any>; left?: React.RefObject<any>; right?: React.RefObject<any> }> = {
+    nome: { down: fSenhaRef, right: fCaminhoRef },
+    senha: { up: fNomeRef, right: fCaminhoRef, down: fSalvarBtnRef },
+    caminho: { left: fNomeRef, down: fFreqRef },
+    freq: { up: fCaminhoRef, left: fSenhaRef, down: fBackupBtnRef },
+    backup: { up: fFreqRef, left: fSenhaRef, down: fImportBtnRef },
+    import: { up: fBackupBtnRef, left: fSenhaRef, down: fSalvarBtnRef },
+    salvar: { up: fSenhaRef, left: fImportBtnRef }
+  };
+
+  const handleNav = (e: React.KeyboardEvent, field: string) => {
+    if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Enter'].includes(e.key)) {
+      const nav = navMap[field];
+      if (!nav) return;
+
+      let target = null;
+      if (e.key === 'ArrowUp') target = nav.up;
+      else if (e.key === 'ArrowDown' || e.key === 'Enter') target = nav.down;
+      else if (e.key === 'ArrowLeft') target = nav.left;
+      else if (e.key === 'ArrowRight') target = nav.right;
+
+      if (target?.current) {
+        e.preventDefault();
+        target.current.focus();
+        if (target.current instanceof HTMLInputElement && target.current.type !== 'password') {
+           const val = target.current.value;
+           target.current.setSelectionRange(val.length, val.length);
+        }
+      }
+    }
+  };
 
   const loadConfig = async () => {
     if (!db) return;
@@ -37,6 +76,17 @@ export default function Configuracoes() {
   useEffect(() => {
     loadConfig();
   }, [db]);
+
+  useEffect(() => {
+    // Focus and cursor at end for Nome Loja on mount
+    setTimeout(() => {
+      if (fNomeRef.current) {
+        fNomeRef.current.focus();
+        const val = fNomeRef.current.value;
+        fNomeRef.current.setSelectionRange(val.length, val.length);
+      }
+    }, 100);
+  }, []);
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -118,11 +168,12 @@ export default function Configuracoes() {
             <label className="block">
               <span className="text-xs uppercase tracking-widest text-white/40 font-bold mb-2 block">Nome da Loja / Unidade</span>
               <input 
-                autoFocus
+                ref={fNomeRef}
                 type="text" 
                 className="luxury-input w-full h-12"
                 value={form.nome_loja}
                 onChange={e => setForm({...form, nome_loja: e.target.value})}
+                onKeyDown={e => handleNav(e, 'nome')}
               />
             </label>
 
@@ -133,10 +184,12 @@ export default function Configuracoes() {
                 </div>
                 <div className="relative">
                   <input 
+                    ref={fSenhaRef}
                     type={showPassword ? "text" : "password"} 
                     className="luxury-input w-full h-12 pr-12 font-mono text-xl tracking-[0.3em]"
                     value={form.senha}
                     onChange={e => setForm({...form, senha: e.target.value.slice(0, 8)})}
+                    onKeyDown={e => handleNav(e, 'senha')}
                   />
                   <button 
                     type="button"
@@ -165,11 +218,13 @@ export default function Configuracoes() {
               </span>
               <div className="relative">
                 <input 
+                  ref={fCaminhoRef}
                   type="text" 
                   placeholder="Ex: C:/Users/Nome/Google Drive/Backups"
                   className="luxury-input w-full h-12 font-mono text-sm pr-12"
                   value={form.caminho_backup_externo}
                   onChange={e => setForm({...form, caminho_backup_externo: e.target.value})}
+                  onKeyDown={e => handleNav(e, 'caminho')}
                 />
                 <button
                   type="button"
@@ -186,9 +241,11 @@ export default function Configuracoes() {
             <label className="block">
               <span className="text-xs uppercase tracking-widest text-white/40 font-bold mb-2 block">Frequência de Backup Automático</span>
               <select
+                ref={fFreqRef}
                 className="luxury-input w-full h-12"
                 value={form.frequencia_backup_dias}
                 onChange={e => setForm({...form, frequencia_backup_dias: parseInt(e.target.value)})}
+                onKeyDown={e => handleNav(e, 'freq')}
                 disabled={!form.caminho_backup_externo}
               >
                 <option value={1}>Diário</option>
@@ -204,8 +261,10 @@ export default function Configuracoes() {
 
             <div className="pt-4 border-t border-white/5 space-y-4">
               <button
+                ref={fBackupBtnRef}
                 onClick={handleManualBackup}
                 disabled={loading || !form.caminho_backup_externo}
+                onKeyDown={e => handleNav(e, 'backup')}
                 className="w-full flex items-center justify-center gap-2 h-12 rounded-xl border border-white/10 hover:bg-white/5 transition-all uppercase text-xs font-black tracking-widest disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 <RefreshCw size={16} className={loading ? "animate-spin" : ""} />
@@ -213,8 +272,10 @@ export default function Configuracoes() {
               </button>
 
               <button
+                ref={fImportBtnRef}
                 onClick={handleImportBackup}
                 disabled={loading}
+                onKeyDown={e => handleNav(e, 'import')}
                 className="w-full flex items-center justify-center gap-2 h-12 rounded-xl border border-white/10 hover:bg-white/5 transition-all uppercase text-xs font-black tracking-widest"
               >
                 <Upload size={16} />
@@ -227,8 +288,10 @@ export default function Configuracoes() {
 
       <div className="mt-auto flex justify-end">
         <button 
+          ref={fSalvarBtnRef}
           onClick={handleSave}
           disabled={loading}
+          onKeyDown={e => handleNav(e, 'salvar')}
           className="btn-primary flex items-center gap-2 px-10 h-14"
         >
           <Save size={20} />
