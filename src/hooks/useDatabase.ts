@@ -50,7 +50,7 @@ CREATE TABLE IF NOT EXISTS venda_itens (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     venda_id INTEGER NOT NULL,
     produto_id INTEGER NOT NULL,
-    lote_id INTEGER NOT NULL,
+    lote_id INTEGER,
     quantidade INTEGER NOT NULL,
     preco_unitario REAL NOT NULL,
     preco_custo REAL NOT NULL,
