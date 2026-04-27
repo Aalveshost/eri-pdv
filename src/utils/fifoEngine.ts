@@ -50,11 +50,12 @@ export async function processarVendaFIFO(
           [qtdADeduzir, lote.id]
         );
 
-        // 4. Registrar o item da venda
+        // 4. Registrar o item da venda com preço de custo do lote
+        const custoUnitario = lote.preco_custo || 0;
         await db.execute(
-          `INSERT INTO venda_itens (venda_id, produto_id, lote_id, quantidade, preco_unitario) 
-           VALUES ($1, $2, $3, $4, $5)`,
-          [vendaId, item.produtoId, lote.id, qtdADeduzir, item.precoUnitario]
+          `INSERT INTO venda_itens (venda_id, produto_id, lote_id, quantidade, preco_unitario, preco_custo) 
+           VALUES ($1, $2, $3, $4, $5, $6)`,
+          [vendaId, item.produtoId, lote.id, qtdADeduzir, item.precoUnitario, custoUnitario]
         );
 
         qtdFaltante -= qtdADeduzir;
@@ -64,9 +65,9 @@ export async function processarVendaFIFO(
         console.warn(`Venda realizada sem estoque de produção para o produto ${item.produtoId}.`);
         // Opcional: Registrar mesmo assim com lote_id nulo para não perder a venda
         await db.execute(
-          `INSERT INTO venda_itens (venda_id, produto_id, lote_id, quantidade, preco_unitario) 
-           VALUES ($1, $2, $3, $4, $5)`,
-          [vendaId, item.produtoId, null, qtdFaltante, item.precoUnitario]
+          `INSERT INTO venda_itens (venda_id, produto_id, lote_id, quantidade, preco_unitario, preco_custo) 
+           VALUES ($1, $2, $3, $4, $5, $6)`,
+          [vendaId, item.produtoId, null, qtdFaltante, item.precoUnitario, 0]
         );
       }
     }
