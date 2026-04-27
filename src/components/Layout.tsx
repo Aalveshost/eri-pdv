@@ -345,20 +345,17 @@ export default function Layout({ children }: { children: React.ReactNode }) {
                       if (e.key === 'Escape') {
                         e.preventDefault();
                         e.stopPropagation();
+                        
+                        const targetPath = pendingPath;
                         setShowPasswordModal(false);
-                        const isConfig = pendingPath === '/config';
                         setPendingPath(null);
                         
-                        // Smart focus return
+                        // Smart focus return: focus the item above the one we tried to open
                         setTimeout(() => {
                           const links = Array.from(document.querySelectorAll('aside nav a')) as HTMLElement[];
-                          if (isConfig) {
-                            links[6]?.focus(); // CONFIG (or 5 for HISTORICO? User said "opcao de cima")
-                            // "opcao de cima" of Config (idx 6) is Historico (idx 5)
-                            links[5]?.focus();
-                          } else {
-                            links[0]?.focus(); // VENDA
-                          }
+                          const menuIdx = menuItems.findIndex(m => m.path === targetPath);
+                          const prevIdx = Math.max(0, menuIdx - 1);
+                          links[prevIdx]?.focus();
                         }, 50);
                         return;
                       }
