@@ -581,12 +581,16 @@ export default function Historico() {
                         ) : (
                           vendaItems[v.id].map(item => (
                             <div key={item.id} className="flex items-center gap-3 px-12 py-2 border-t border-white/5 text-sm hover:bg-white/5 transition-colors">
-                              <span className="flex-1 text-white/70 font-medium">{item.produto_nome}</span>
-                              <div className="flex items-center gap-4 text-right">
-                                <span className="text-white/30 text-xs w-16">
-                                  {item.quantidade} x R$ {formatCurrency(item.preco_unitario)}
+                              <span className="flex-1 text-white/70 font-medium">
+                                <span className="text-luxury-orange font-black mr-2">{item.quantidade}x</span>
+                                {item.produto_nome}
+                              </span>
+                              <div className="flex items-center gap-2 text-right font-mono">
+                                <span className="text-white/30 text-[10px]">
+                                  R$ {formatCurrency(item.preco_unitario)}
                                 </span>
-                                <span className="text-white w-24 text-right font-black font-mono">
+                                <span className="text-white/10 text-xs">|</span>
+                                <span className="text-white font-black">
                                   R$ {formatCurrency(item.quantidade * item.preco_unitario)}
                                 </span>
                               </div>
@@ -630,12 +634,16 @@ export default function Historico() {
                         ) : (
                           vendaPrazoItems[v.id].map(item => (
                             <div key={item.id} className="flex items-center gap-3 px-12 py-2 border-t border-white/5 text-sm hover:bg-white/5 transition-colors">
-                              <span className="flex-1 text-white/70 font-medium">{item.produto_nome}</span>
-                              <div className="flex items-center gap-4 text-right">
-                                <span className="text-white/30 text-xs w-16">
-                                  {item.quantidade} un
+                              <span className="flex-1 text-white/70 font-medium">
+                                <span className="text-luxury-orange font-black mr-2">{item.quantidade}x</span>
+                                {item.produto_nome}
+                              </span>
+                              <div className="flex items-center gap-2 text-right font-mono">
+                                <span className="text-white/30 text-[10px]">
+                                  R$ {formatCurrency(item.valor_total / item.quantidade)}
                                 </span>
-                                <span className="text-white w-24 text-right font-black font-mono">
+                                <span className="text-white/10 text-xs">|</span>
+                                <span className="text-white font-black">
                                   R$ {formatCurrency(item.valor_total)}
                                 </span>
                               </div>
