@@ -113,35 +113,67 @@ CREATE INDEX IF NOT EXISTS idx_vendas_prazo_cliente ON vendas_prazo(cliente_id, 
 CREATE INDEX IF NOT EXISTS idx_pagamentos_cliente ON pagamentos_prazo(cliente_id, data_pagamento);
 `;
 
+let dbInstance: Database | null = null;
+let initPromise: Promise<Database> | null = null;
+
 export function useDatabase() {
-  const [db, setDb] = useState<Database | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [db, setDb] = useState<Database | null>(dbInstance);
+  const [loading, setLoading] = useState(!dbInstance);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    if (dbInstance) {
+      setDb(dbInstance);
+      setLoading(false);
+      return;
+    }
+
     async function init() {
       try {
-        const _db = await Database.load("sqlite:salgados.db");
-        
-        // Split schema by semicolon and execute each statement
-        const statements = SCHEMA.split(';').filter(s => s.trim().length > 0);
-        for (const s of statements) {
-          await _db.execute(s);
+        if (initPromise) {
+          const _db = await initPromise;
+          setDb(_db);
+          setLoading(false);
+          return;
         }
-        
-        // Helper to ensure schema columns exist if table was created previously without them
-        try { await _db.execute("ALTER TABLE produtos ADD COLUMN preco_custo REAL DEFAULT 0"); } catch (e) { /* ignore if exists */ }
-        try { await _db.execute("ALTER TABLE configuracoes ADD COLUMN frequencia_backup_dias INTEGER DEFAULT 7"); } catch (e) { /* ignore if exists */ }
-        try { await _db.execute("ALTER TABLE contas_arquivadas ADD COLUMN cliente_telefone TEXT"); } catch (e) { /* ignore if exists */ }
-        try { await _db.execute("ALTER TABLE contas_arquivadas ADD COLUMN itens_json TEXT"); } catch (e) { /* ignore if exists */ }
-        try { await _db.execute("ALTER TABLE contas_arquivadas ADD COLUMN pagamentos_json TEXT"); } catch (e) { /* ignore if exists */ }
-        try { await _db.execute("ALTER TABLE contas_arquivadas ADD COLUMN codigo_arquivamento TEXT"); } catch (e) { /* ignore if exists */ }
-        try { await _db.execute("ALTER TABLE lotes ADD COLUMN qtd_vendida INTEGER DEFAULT 0"); } catch (e) { /* ignore if exists */ }
-        try { await _db.execute("ALTER TABLE lotes ADD COLUMN produto_avulso_nome TEXT"); } catch (e) { /* ignore if exists */ }
-        try { await _db.execute("ALTER TABLE configuracoes ADD COLUMN senha TEXT DEFAULT '1234'"); } catch (e) { /* ignore if exists */ }
-        
-        setDb(_db);
-      } catch (err) {
-        console.error("Database init error:", err);
+
+        console.log("useDatabase: Iniciando banco de dados (Singleton)...");
+        initPromise = (async () => {
+          const _db = await Database.load("sqlite:salgados.db");
+          
+          // Split schema by semicolon and execute each statement
+          const statements = SCHEMA.split(';').filter(s => s.trim().length > 0);
+          for (const s of statements) {
+            await _db.execute(s);
+          }
+          
+          // Migrations
+          const migrations = [
+            "ALTER TABLE produtos ADD COLUMN preco_custo REAL DEFAULT 0",
+            "ALTER TABLE configuracoes ADD COLUMN frequencia_backup_dias INTEGER DEFAULT 7",
+            "ALTER TABLE contas_arquivadas ADD COLUMN cliente_telefone TEXT",
+            "ALTER TABLE contas_arquivadas ADD COLUMN itens_json TEXT",
+            "ALTER TABLE contas_arquivadas ADD COLUMN pagamentos_json TEXT",
+            "ALTER TABLE contas_arquivadas ADD COLUMN codigo_arquivamento TEXT",
+            "ALTER TABLE lotes ADD COLUMN qtd_vendida INTEGER DEFAULT 0",
+            "ALTER TABLE lotes ADD COLUMN produto_avulso_nome TEXT",
+            "ALTER TABLE configuracoes ADD COLUMN senha TEXT DEFAULT '1234'"
+          ];
+
+          for (const m of migrations) {
+            try { await _db.execute(m); } catch (e) { /* ignore */ }
+          }
+
+          dbInstance = _db;
+          return _db;
+        })();
+
+        const finalizedDb = await initPromise;
+        setDb(finalizedDb);
+      } catch (err: any) {
+        const msg = String(err?.message || err);
+        console.error("useDatabase: Erro crítico no init:", msg);
+        setError(msg);
       } finally {
         setLoading(false);
       }
@@ -149,5 +181,5 @@ export function useDatabase() {
     init();
   }, []);
 
-  return { db, loading };
+  return { db, loading, error };
 }
