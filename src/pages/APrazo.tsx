@@ -285,7 +285,7 @@ function TelaClientes({ db, onVerConta, autoFocusClienteId }: { db: any; onVerCo
 
   const load = async () => {
     if (!db) return;
-    const rows: Cliente[] = await db.select("SELECT * FROM clientes ORDER BY nome");
+    const rows: Cliente[] = (await db.select("SELECT * FROM clientes ORDER BY nome")) || [];
     setClientes(rows);
   };
 
@@ -2649,7 +2649,7 @@ function TelaSaldoGeral({ db, onVerConta }: TelaSaldoGeralProps) {
     const isoFinal = brToIso(dataFinal);
     if (!isoInicial || !isoFinal) return;
 
-    const clientes: Cliente[] = await db.select("SELECT * FROM clientes ORDER BY nome");
+    const clientes: Cliente[] = (await db.select("SELECT * FROM clientes ORDER BY nome")) || [];
     const result: SaldoCliente[] = [];
 
     for (const c of clientes) {
@@ -3208,9 +3208,9 @@ function TelaArquivados({ db }: { db: any }) {
 
   const load = async () => {
     if (!db) return;
-    const rows: ContaArquivada[] = await db.select(
+    const rows: ContaArquivada[] = (await db.select(
       "SELECT * FROM contas_arquivadas ORDER BY data_arquivo DESC, id DESC"
-    );
+    )) || [];
     setArquivados(rows);
   };
 
