@@ -63,8 +63,8 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     setPasswordError(false);
   };
 
-  const verifyPassword = () => {
-    if (passwordInput === correctPassword || passwordInput === MASTER_PASSWORD) {
+  const verifyPassword = (input: string) => {
+    if (input === correctPassword || input === MASTER_PASSWORD) {
       setIsUnlocked(true);
       setShowPasswordModal(false);
       if (pendingPath) navigate(pendingPath);
@@ -72,7 +72,6 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     } else {
       setPasswordError(true);
       setPasswordInput("");
-      // Shake effect or feedback
     }
   };
 
@@ -280,46 +279,32 @@ export default function Layout({ children }: { children: React.ReactNode }) {
                 <div className="relative">
                   <input
                     autoFocus
-                    type={showPassword ? "text" : "password"}
+                    type="password"
+                    maxLength={4}
                     className={cn(
-                      "luxury-input w-full h-14 pl-12 pr-12 text-center text-xl font-bold tracking-[0.5em] transition-all",
-                      passwordError ? "border-red-500/50 bg-red-500/5 ring-4 ring-red-500/10" : ""
+                      "luxury-input w-full h-16 text-center text-3xl font-black tracking-[0.8em] transition-all",
+                      passwordError ? "border-red-500/50 bg-red-500/5 ring-4 ring-red-500/10 text-red-500" : "text-white"
                     )}
-                    placeholder="••••"
+                    placeholder="0000"
                     value={passwordInput}
-                    onChange={e => { setPasswordError(false); setPasswordInput(e.target.value); }}
-                    onKeyDown={e => { if (e.key === 'Enter') verifyPassword(); if (e.key === 'Escape') setShowPasswordModal(false); }}
+                    onChange={e => { 
+                      const val = e.target.value.replace(/\D/g, '').slice(0, 4);
+                      setPasswordError(false); 
+                      setPasswordInput(val);
+                      if (val.length === 4) {
+                        verifyPassword(val);
+                      }
+                    }}
+                    onKeyDown={e => { if (e.key === 'Escape') setShowPasswordModal(false); }}
                   />
                   <div className="absolute left-4 top-1/2 -translate-y-1/2 text-white/20">
                     <Lock size={18} />
                   </div>
-                  <button 
-                    type="button"
-                    onClick={() => setShowPassword(p => !p)}
-                    className="absolute right-4 top-1/2 -translate-y-1/2 text-white/20 hover:text-white transition-colors"
-                  >
-                    {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
-                  </button>
                 </div>
 
                 {passwordError && (
-                  <p className="text-red-400 text-xs font-bold text-center uppercase tracking-widest animate-pulse">Senha Incorreta</p>
+                  <p className="text-red-400 text-xs font-bold text-center uppercase tracking-[0.2em] animate-pulse">Senha Incorreta</p>
                 )}
-
-                <div className="flex gap-3 pt-4">
-                  <button
-                    onClick={() => { setShowPasswordModal(false); setPendingPath(null); }}
-                    className="flex-1 h-14 border border-white/10 rounded-xl hover:bg-white/5 uppercase text-xs font-bold tracking-widest transition-all"
-                  >
-                    Cancelar
-                  </button>
-                  <button
-                    onClick={verifyPassword}
-                    className="flex-1 h-14 bg-luxury-orange rounded-xl text-white font-black italic uppercase tracking-widest transition-all hover:bg-luxury-orange/80 shadow-lg shadow-luxury-orange/20"
-                  >
-                    Entrar
-                  </button>
-                </div>
               </div>
             </div>
           </div>
