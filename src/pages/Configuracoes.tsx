@@ -36,38 +36,46 @@ export default function Configuracoes() {
   };
 
   const handleNav = (e: React.KeyboardEvent, field: string) => {
-    if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Enter'].includes(e.key)) {
-      if (field === 'senha' && e.key === 'Enter') {
-        e.preventDefault();
-        e.stopPropagation();
-        setShowPassword(prev => !prev);
-        setIsEditingPassword(true);
-        setTimeout(() => {
-          if (fSenhaRef.current) {
-            fSenhaRef.current.focus();
-            const val = fSenhaRef.current.value;
-            fSenhaRef.current.setSelectionRange(val.length, val.length);
-          }
-        }, 0);
-        return;
-      }
+    const isEnter = e.key === 'Enter';
+    const isTab = e.key === 'Tab';
+    const isArrow = ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key);
 
-      const nav = navMap[field];
-      if (!nav) return;
+    if (!isEnter && !isTab && !isArrow) return;
 
-      let target = null;
-      if (e.key === 'ArrowUp') target = nav.up;
-      else if (e.key === 'ArrowDown' || e.key === 'Enter') target = nav.down;
-      else if (e.key === 'ArrowLeft') target = nav.left;
-      else if (e.key === 'ArrowRight') target = nav.right;
-
-      if (target?.current) {
-        e.preventDefault();
-        target.current.focus();
-        if (target.current instanceof HTMLInputElement && target.current.type !== 'password') {
-           const val = target.current.value;
-           target.current.setSelectionRange(val.length, val.length);
+    // Special Case: Enter on Password toggles visibility/edit
+    if (field === 'senha' && isEnter) {
+      e.preventDefault();
+      e.stopPropagation();
+      setShowPassword(prev => !prev);
+      setIsEditingPassword(true);
+      setTimeout(() => {
+        if (fSenhaRef.current) {
+          fSenhaRef.current.focus();
+          const val = fSenhaRef.current.value;
+          fSenhaRef.current.setSelectionRange(val.length, val.length);
         }
+      }, 0);
+      return;
+    }
+
+    const nav = navMap[field];
+    if (!nav) return;
+
+    let target = null;
+    if (e.key === 'ArrowUp' || (isTab && e.shiftKey)) target = nav.up;
+    else if (e.key === 'ArrowDown' || (isTab && !e.shiftKey)) target = nav.down;
+    else if (e.key === 'ArrowLeft') target = nav.left;
+    else if (e.key === 'ArrowRight') target = nav.right;
+    // Enter on other fields moves down
+    else if (isEnter) target = nav.down;
+
+    if (target?.current) {
+      e.preventDefault();
+      e.stopPropagation();
+      target.current.focus();
+      if (target.current instanceof HTMLInputElement && target.current.type !== 'password') {
+         const val = target.current.value;
+         target.current.setSelectionRange(val.length, val.length);
       }
     }
   };
@@ -236,26 +244,11 @@ export default function Configuracoes() {
                     value={form.senha}
                     onChange={e => setForm({...form, senha: e.target.value.slice(0, 8)})}
                     onBlur={() => { setIsEditingPassword(false); setShowPassword(false); }}
-                    onKeyDown={e => {
-                      if (e.key === 'Enter') {
-                        if (!isEditingPassword) {
-                          e.preventDefault();
-                          setIsEditingPassword(true);
-                          setShowPassword(true);
-                        } else {
-                          setIsEditingPassword(false);
-                          setShowPassword(false);
-                          // After finishing edit, move down or stay? Let's stay but lock.
-                        }
-                        return;
-                      }
-                      if (!isEditingPassword) {
-                        handleNav(e, 'senha');
-                      }
-                    }}
+                    onKeyDown={e => handleNav(e, 'senha')}
                   />
                   <button 
                     type="button"
+                    tabIndex={-1}
                     onClick={() => setShowPassword(p => !p)}
                     className="absolute right-3 top-1/2 -translate-y-1/2 p-2 text-white/20 hover:text-white transition-colors"
                   >
