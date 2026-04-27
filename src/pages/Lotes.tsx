@@ -222,7 +222,7 @@ export default function ProducaoPage() {
   useEffect(() => {
     if (isModalOpen) {
       setForm({ produzido: "", data: isoToBr(selectedDate), hora: getCurrentTime() });
-      setSearchTerm(""); setSelectedProd(null); setShowResults(false); setErrors({});
+      setSearchTerm(""); setSelectedProd(null); setShowResults(false);
       setTimeout(() => searchInputRef.current?.focus(), 100);
     }
   }, [isModalOpen]);
@@ -230,10 +230,7 @@ export default function ProducaoPage() {
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!db) return;
-    const newErrors: Record<string, string> = {};
-    if (!searchTerm) newErrors.produto = "Obrigatório";
-    if (!form.produzido) newErrors.produzido = "Obrigatório";
-    if (Object.keys(newErrors).length > 0) { setErrors(newErrors); return; }
+    if (!searchTerm || !form.produzido) return;
     try {
       const parts = form.data.split('/');
       const isoDate = `${parts[2]}-${parts[1]}-${parts[0]}`;
