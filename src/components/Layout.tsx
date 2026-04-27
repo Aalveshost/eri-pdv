@@ -62,6 +62,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     
     // Always ask password for Config and Dashboard, OR ask if system is locked for other protected pages
     if (path === "/config" || path === "/dashboard" || !isUnlocked) {
+      lastSidebarFocusRef.current = document.activeElement as HTMLElement;
       setPendingPath(path);
       setShowPasswordModal(true);
       setPasswordInput("");
@@ -78,12 +79,18 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     }
   }, [showPasswordModal]);
 
+  const lastSidebarFocusRef = useRef<HTMLElement | null>(null);
+
   const verifyPassword = (input: string) => {
     if (input === correctPassword || input === MASTER_PASSWORD) {
       setIsUnlocked(true);
       setShowPasswordModal(false);
       if (pendingPath) navigate(pendingPath);
       setPendingPath(null);
+      // Restore sidebar focus after a short delay to allow modal to close
+      setTimeout(() => {
+        lastSidebarFocusRef.current?.focus();
+      }, 50);
     } else {
       setPasswordError(true);
       setPasswordInput("");
@@ -321,7 +328,12 @@ export default function Layout({ children }: { children: React.ReactNode }) {
                         verifyPassword(val);
                       }
                     }}
-                    onKeyDown={e => { if (e.key === 'Escape') setShowPasswordModal(false); }}
+                    onKeyDown={e => { 
+                      if (e.key === 'Escape') {
+                        setShowPasswordModal(false);
+                        setTimeout(() => lastSidebarFocusRef.current?.focus(), 50);
+                      }
+                    }}
                   />
                   <div className="absolute left-4 top-1/2 -translate-y-1/2 text-white/20">
                     <Lock size={18} />
