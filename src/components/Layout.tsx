@@ -87,6 +87,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     } else {
       setPasswordError(true);
       setPasswordInput("");
+      setTimeout(() => passwordInputRef.current?.focus(), 10);
     }
   };
 
@@ -290,8 +291,17 @@ export default function Layout({ children }: { children: React.ReactNode }) {
 
         {/* Password Modal */}
         {showPasswordModal && (
-          <div className="fixed inset-0 z-[400] flex items-center justify-center p-6 bg-black/80 backdrop-blur-md">
-            <div className="glass-card w-full max-w-sm p-8 border-luxury-orange/20 shadow-2xl">
+          <div 
+            className="fixed inset-0 z-[400] flex items-center justify-center p-6 bg-black/80 backdrop-blur-md"
+            onClick={() => {
+              setShowPasswordModal(false);
+              setPendingPath(null);
+            }}
+          >
+            <div 
+              className="glass-card w-full max-w-sm p-8 border-luxury-orange/20 shadow-2xl"
+              onClick={e => e.stopPropagation()}
+            >
               <div className="flex flex-col items-center text-center mb-8">
                 <div className="w-16 h-16 bg-luxury-orange/10 rounded-full flex items-center justify-center mb-4 border border-luxury-orange/20">
                   <Lock className="text-luxury-orange" size={32} />
