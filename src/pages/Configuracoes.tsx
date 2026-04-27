@@ -25,12 +25,12 @@ export default function Configuracoes() {
 
   const navMap: Record<string, { up?: React.RefObject<any>; down?: React.RefObject<any>; left?: React.RefObject<any>; right?: React.RefObject<any> }> = {
     nome: { down: fSenhaRef, right: fCaminhoRef },
-    senha: { up: fNomeRef, right: fCaminhoRef, down: fSalvarBtnRef },
+    senha: { up: fNomeRef, right: fFreqRef, down: fSalvarBtnRef },
     caminho: { left: fNomeRef, down: fFreqRef },
-    freq: { up: fCaminhoRef, left: fSenhaRef, down: fBackupBtnRef },
+    freq: { up: fCaminhoRef, left: fSenhaRef, down: fBackupBtnRef, right: fBackupBtnRef },
     backup: { up: fFreqRef, left: fSenhaRef, down: fImportBtnRef },
     import: { up: fBackupBtnRef, left: fSenhaRef, down: fSalvarBtnRef },
-    salvar: { up: fSenhaRef, left: fImportBtnRef }
+    salvar: { up: fImportBtnRef, left: fSenhaRef }
   };
 
   const handleNav = (e: React.KeyboardEvent, field: string) => {
