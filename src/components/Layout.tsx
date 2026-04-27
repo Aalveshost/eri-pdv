@@ -143,9 +143,6 @@ export default function Layout({ children }: { children: React.ReactNode }) {
         if (goNext) {
           e.preventDefault();
           if (idx >= 0 && idx < links.length - 1) {
-            const nextPath = menuItems[idx + 1].path;
-            if (location.pathname === '/' && pdvNavigateAwayInterceptor?.()) return;
-            handleProtectedNavigation(nextPath);
             setTimeout(() => (document.querySelectorAll('aside nav a')[idx + 1] as HTMLElement)?.focus(), 0);
           }
         }
@@ -153,9 +150,6 @@ export default function Layout({ children }: { children: React.ReactNode }) {
         if (goPrev) {
           e.preventDefault();
           if (idx > 0) {
-            const prevPath = menuItems[idx - 1].path;
-            if (location.pathname === '/' && pdvNavigateAwayInterceptor?.()) return;
-            handleProtectedNavigation(prevPath);
             setTimeout(() => (document.querySelectorAll('aside nav a')[idx - 1] as HTMLElement)?.focus(), 0);
           }
         }
