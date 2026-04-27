@@ -152,7 +152,8 @@ export function useDatabase() {
             "ALTER TABLE contas_arquivadas ADD COLUMN codigo_arquivamento TEXT",
             "ALTER TABLE lotes ADD COLUMN qtd_vendida INTEGER DEFAULT 0",
             "ALTER TABLE lotes ADD COLUMN produto_avulso_nome TEXT",
-            "ALTER TABLE configuracoes ADD COLUMN senha TEXT DEFAULT '1234'"
+            "ALTER TABLE configuracoes ADD COLUMN senha TEXT DEFAULT '1234'",
+            "ALTER TABLE venda_itens ADD COLUMN preco_custo REAL DEFAULT 0"
           ];
 
           for (const m of migrations) {
