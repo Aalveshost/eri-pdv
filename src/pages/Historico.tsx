@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { useDatabase } from "../hooks/useDatabase";
+import { formatCurrency } from "../utils/currency";
 
 interface Venda {
   id: number;
@@ -91,7 +92,6 @@ function DateInput({
   const localRef = useRef<HTMLInputElement>(null);
   const inputRef = externalRef ?? localRef;
   const [digits, setDigits] = useState(() => value.replace(/\//g,''));
-  const displayValue = digits.slice(0,2) + '/' + digits.slice(2,4) + '/' + digits.slice(4,8);
 
   useEffect(() => {
     if (value && isValidBrDate(value)) {
@@ -101,42 +101,67 @@ function DateInput({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [value]);
 
+  const digitToDisplayPos = (digitPos: number) => {
+    if (digitPos <= 2) return digitPos;
+    if (digitPos <= 4) return digitPos + 1;
+    return digitPos + 2;
+  };
+
+  const displayValue = digits.slice(0, 2) + '/' + digits.slice(2, 4) + '/' + digits.slice(4, 8);
+
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     const input = e.currentTarget;
-    const pos = input.selectionStart ?? 0;
+    const posInDisplay = input.selectionStart ?? 0;
+    
+    // Converter posição do cursor no display para posição nos dígitos (0-7)
+    let pos = 0;
+    if (posInDisplay <= 2) pos = posInDisplay;
+    else if (posInDisplay <= 5) pos = posInDisplay - 1;
+    else pos = posInDisplay - 2;
 
     if (e.key === 'Escape' || e.key === 'Enter' || e.key === 'ArrowDown' || e.key === 'ArrowUp') {
       externalKeyDown?.(e);
       return;
     }
-    if (e.key === 'ArrowRight' && pos >= 8) { externalKeyDown?.(e); return; }
-    if (e.key === 'ArrowLeft' && pos <= 0) { externalKeyDown?.(e); return; }
+
+    if (e.key === 'ArrowRight' && posInDisplay >= 10) { externalKeyDown?.(e); return; }
+    if (e.key === 'ArrowLeft' && posInDisplay <= 0) { externalKeyDown?.(e); return; }
 
     if (!inputActive) { externalKeyDown?.(e); return; }
 
     if (/^\d$/.test(e.key)) {
       e.preventDefault();
       if (pos >= 8) return;
-      const nd = digits.slice(0,pos) + e.key + digits.slice(pos+1);
+      const nd = digits.slice(0, pos) + e.key + digits.slice(pos + 1);
       setDigits(nd);
-      const np = pos + 1;
-      const dispPos = np <= 2 ? np : np <= 4 ? np+1 : np+2;
-      setTimeout(() => input.setSelectionRange(dispPos, dispPos), 0);
-      const br = nd.slice(0,2)+'/'+nd.slice(2,4)+'/'+nd.slice(4,8);
+      const nextDigitPos = pos + 1;
+      const nextDisplayPos = digitToDisplayPos(nextDigitPos);
+      setTimeout(() => input.setSelectionRange(nextDisplayPos, nextDisplayPos), 0);
+      
+      const br = nd.slice(0, 2) + '/' + nd.slice(2, 4) + '/' + nd.slice(4, 8);
       if (isValidBrDate(br)) onChange(br);
       return;
     }
+
     if (e.key === 'Backspace') {
       e.preventDefault();
-      if (pos === 0) return;
-      const rawPos = pos <= 2 ? pos : pos <= 5 ? pos-1 : pos-2;
-      const nd = digits.slice(0,rawPos-1) + '_' + digits.slice(rawPos);
+      if (posInDisplay === 0) return;
+      
+      // Se estiver logo após uma barra, apagar o dígito ANTERIOR à barra
+      let digitToDeleteIdx = pos - 1;
+      if (posInDisplay === 3 || posInDisplay === 6) {
+         digitToDeleteIdx = pos - 1;
+      }
+
+      if (digitToDeleteIdx < 0) return;
+
+      const nd = digits.slice(0, digitToDeleteIdx) + '_' + digits.slice(digitToDeleteIdx + 1);
       setDigits(nd);
-      const pr = rawPos - 1;
-      const dispPos = pr <= 2 ? pr : pr <= 4 ? pr+1 : pr+2;
-      setTimeout(() => input.setSelectionRange(dispPos, dispPos), 0);
+      const prevDisplayPos = digitToDisplayPos(digitToDeleteIdx);
+      setTimeout(() => input.setSelectionRange(prevDisplayPos, prevDisplayPos), 0);
       return;
     }
+
     if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') return;
     e.preventDefault();
   };
@@ -162,7 +187,7 @@ function DateInput({
 
 export default function Historico() {
   const { db } = useDatabase();
-  const [dataInicial, setDataInicial] = useState(getFirstDayOfMonthStr());
+  const [dataInicial, setDataInicial] = useState(getTodayStr());
   const [dataFinal, setDataFinal] = useState(getTodayStr());
   const [vendas, setVendas] = useState<Venda[]>([]);
   const [vendaItems, setVendaItems] = useState<Record<number, VendaItem[]>>({});
@@ -464,7 +489,7 @@ export default function Historico() {
           ].map(t => (
             <div key={t.label} className="text-right">
               <p className="text-xs text-white/30 uppercase font-bold">{t.label}</p>
-              <p className={`text-lg font-black ${t.color}`}>R$ {t.value.toFixed(2)}</p>
+              <p className={`text-lg font-black ${t.color}`}>R$ {formatCurrency(t.value)}</p>
             </div>
           ))}
         </div>
@@ -540,7 +565,7 @@ export default function Historico() {
                       </div>
                       <div className="px-4 py-3 font-mono text-sm text-white/70 w-48 shrink-0">{isoToBr(v.data_venda)}</div>
                       <div className={`px-4 py-3 font-bold text-sm flex-1 ${meta.color}`}>{meta.label}</div>
-                      <div className="px-4 py-3 text-right font-black text-white w-32 shrink-0">R$ {v.total_venda.toFixed(2)}</div>
+                      <div className="px-4 py-3 text-right font-black text-white w-32 shrink-0">R$ {formatCurrency(v.total_venda)}</div>
                     </div>
                     {expanded && (
                       <div className="bg-black/40 border-b border-white/5 overflow-hidden">
@@ -554,10 +579,10 @@ export default function Historico() {
                               <span className="flex-1 text-white/70 font-medium">{item.produto_nome}</span>
                               <div className="flex items-center gap-4 text-right">
                                 <span className="text-white/30 text-xs w-16">
-                                  {item.quantidade} x R$ {item.preco_unitario.toFixed(2)}
+                                  {item.quantidade} x R$ {formatCurrency(item.preco_unitario)}
                                 </span>
                                 <span className="text-white w-24 text-right font-black font-mono">
-                                  R$ {(item.quantidade * item.preco_unitario).toFixed(2)}
+                                  R$ {formatCurrency(item.quantidade * item.preco_unitario)}
                                 </span>
                               </div>
                             </div>
@@ -589,7 +614,7 @@ export default function Historico() {
                       </div>
                       <div className="px-4 py-3 font-mono text-sm text-white/70 w-48 shrink-0">{isoToBr(v.data_venda)}</div>
                       <div className="px-4 py-3 font-semibold text-luxury-orange flex-1">{v.cliente_nome}</div>
-                      <div className="px-4 py-3 text-right font-black text-white w-32 shrink-0">R$ {v.total.toFixed(2)}</div>
+                      <div className="px-4 py-3 text-right font-black text-white w-32 shrink-0">R$ {formatCurrency(v.total)}</div>
                     </div>
                     {expanded && (
                       <div className="bg-black/40 border-b border-white/5 overflow-hidden">
@@ -606,7 +631,7 @@ export default function Historico() {
                                   {item.quantidade} un
                                 </span>
                                 <span className="text-white w-24 text-right font-black font-mono">
-                                  R$ {item.valor_total.toFixed(2)}
+                                  R$ {formatCurrency(item.valor_total)}
                                 </span>
                               </div>
                             </div>
