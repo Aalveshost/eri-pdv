@@ -61,7 +61,7 @@ function isoToTime(iso: string) {
 
 // ─── Auto-format DateInput ────────────────────────────────────
 function DateInput({
-  value, // DD/MM/YYYY string
+  value, 
   onChange,
   highlighted,
   externalRef,
@@ -77,55 +77,75 @@ function DateInput({
 }) {
   const localRef = useRef<HTMLInputElement>(null);
   const inputRef = externalRef ?? localRef;
+  const displayValue = value || '__/__/____';
 
-  const [digits, setDigits] = useState(() => {
-    if (value && isValidBr(value)) return value.replace(/\//g, "");
-    return getTodayDigits();
-  });
-
-  const displayValue = digits.slice(0, 2) + "/" + digits.slice(2, 4) + "/" + digits.slice(4, 8);
-
-  useEffect(() => {
-    if (value && isValidBr(value)) {
-      const raw = value.replace(/\//g, "");
-      if (raw !== digits) setDigits(raw);
-    }
-  }, [value]);
+  const handleFocus = (e: React.FocusEvent<HTMLInputElement>) => {
+    e.target.setSelectionRange(0, 0);
+  };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     const input = e.currentTarget;
-    const pos = input.selectionStart ?? 0;
-    if (e.key === "Escape" || e.key === "Tab") { externalKeyDown?.(e); return; }
-    if (/^\d$/.test(e.key)) {
+    const isDigit = /^\d$/.test(e.key);
+    
+    if (e.key === "Escape" || e.key === "Tab" || e.key === "Enter" || e.key === "ArrowUp" || e.key === "ArrowDown") { 
+      externalKeyDown?.(e); 
+      return; 
+    }
+
+    const displayPos = input.selectionStart || 0;
+    const rawPos = displayPos <= 2 ? displayPos : displayPos <= 5 ? displayPos - 1 : displayPos - 2;
+    const prevRaw = (displayValue.replace(/\//g, '') + '________').slice(0, 8);
+    const formatDate = (v: string) => `${v.slice(0,2)}/${v.slice(2,4)}/${v.slice(4,8)}`;
+
+    if (isDigit && rawPos < 8) {
       e.preventDefault();
-      if (pos >= 8) return;
-      const nd = digits.slice(0, pos) + e.key + digits.slice(pos + 1);
-      setDigits(nd);
-      const np = pos + 1;
-      const dispPos = np <= 2 ? np : np <= 4 ? np + 1 : np + 2;
-      setTimeout(() => input.setSelectionRange(dispPos, dispPos), 0);
-      const br = nd.slice(0, 2) + "/" + nd.slice(2, 4) + "/" + nd.slice(4, 8);
-      if (isValidBr(br)) onChange(br);
+      const d = prevRaw.split('');
+      d[rawPos] = e.key;
+      const nd = d.join('');
+      const newDisp = formatDate(nd);
+      onChange(newDisp);
+
+      const nextRaw = rawPos + 1;
+      const nextDisp = nextRaw <= 2 ? nextRaw : nextRaw <= 4 ? nextRaw + 1 : nextRaw + 2;
+      setTimeout(() => input.setSelectionRange(nextDisp, nextDisp), 0);
       return;
     }
+
     if (e.key === "Backspace") {
-      e.preventDefault(); if (pos === 0) return;
-      const rawPos = pos <= 2 ? pos : pos <= 5 ? pos - 1 : pos - 2;
-      const nd = digits.slice(0, rawPos - 1) + "_" + digits.slice(rawPos);
-      setDigits(nd);
-      const prevRaw = rawPos - 1;
-      const dispPos = prevRaw <= 2 ? prevRaw : prevRaw <= 4 ? prevRaw + 1 : prevRaw + 2;
-      setTimeout(() => input.setSelectionRange(dispPos, dispPos), 0);
+      e.preventDefault();
+      const d = prevRaw.split('');
+      const posToDel = (displayPos > 0 && input.selectionStart === input.selectionEnd) ? rawPos - 1 : rawPos;
+      if (posToDel < 0) return;
+      
+      d[posToDel] = '_';
+      const nd = d.join('');
+      const newDisp = formatDate(nd);
+      onChange(newDisp);
+
+      const nextDisp = posToDel <= 2 ? posToDel : posToDel <= 4 ? posToDel + 1 : posToDel + 2;
+      setTimeout(() => input.setSelectionRange(nextDisp, nextDisp), 0);
       return;
     }
-    if (e.key === "Enter") { externalKeyDown?.(e); return; }
-    e.preventDefault();
+
+    if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') {
+      e.preventDefault();
+    }
   };
 
   return (
     <input
-      ref={inputRef} type="text" value={displayValue} onChange={() => {}} onKeyDown={handleKeyDown} maxLength={10} disabled={disabled}
-      className={cn("luxury-input h-8 text-xs w-28 text-center font-mono tracking-widest outline-none", highlighted ? "border-luxury-orange ring-1 ring-luxury-orange/50" : "")}
+      ref={inputRef}
+      type="text"
+      value={displayValue}
+      onChange={() => {}}
+      onFocus={handleFocus}
+      onKeyDown={handleKeyDown}
+      maxLength={10}
+      disabled={disabled}
+      className={cn(
+        "luxury-input h-9 text-[11px] w-[110px] text-center font-mono tracking-widest outline-none transition-all",
+        highlighted ? "border-luxury-orange ring-1 ring-luxury-orange/50 bg-luxury-orange/5" : "opacity-80"
+      )}
     />
   );
 }
