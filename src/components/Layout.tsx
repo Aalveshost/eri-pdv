@@ -192,18 +192,26 @@ export default function Layout({ children }: { children: React.ReactNode }) {
       }
 
       // Lógica do Main Content (Quando foco esta na direita)
-      // /aprazo gerencia seu próprio ESC internamente
       const isAprazo = location.pathname === '/aprazo';
       if (isMainFocused && e.key === "Escape" && !isAprazo) {
         if (location.pathname === '/pdv' && pdvNavigateAwayInterceptor?.()) {
-          return; // PDV showed its own confirm modal
+          return; 
         }
 
+        const activeEl = document.activeElement;
+        const isInput = activeEl && ["INPUT", "TEXTAREA", "SELECT"].includes(activeEl.tagName);
+
         e.preventDefault();
-        const activeSidebarLink = document.querySelector('aside nav a[class*="bg-luxury-orange"]') as HTMLElement;
-        if (activeSidebarLink) {
-            (document.activeElement as HTMLElement)?.blur();
-            activeSidebarLink.focus();
+
+        if (isInput) {
+          // 1st ESC: Just blur the input
+          (activeEl as HTMLElement).blur();
+        } else {
+          // 2nd ESC (or no input focused): Go to sidebar
+          const activeSidebarLink = document.querySelector('aside nav a[class*="bg-luxury-orange"]') as HTMLElement;
+          if (activeSidebarLink) {
+              activeSidebarLink.focus();
+          }
         }
       }
     };
