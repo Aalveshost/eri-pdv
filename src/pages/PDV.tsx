@@ -67,6 +67,8 @@ export default function PDV() {
   const clienteListRef = useRef<HTMLDivElement>(null);
   const clienteItemRefs = useRef<(HTMLButtonElement | null)[]>([]);
   const [vendaSuccess, setVendaSuccess] = useState<string|null>(null);
+  const [showConfirmFinalize, setShowConfirmFinalize] = useState<{ metodo: string; label: string } | null>(null);
+  const finalizeConfirmRef = useRef<HTMLButtonElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const dateInputRef = useRef<HTMLInputElement>(null);
   const modalQuantityRef = useRef<HTMLInputElement>(null);
@@ -273,8 +275,14 @@ export default function PDV() {
     };
 
     const confirmSelected = (sel: string) => {
-      if (sel === 'prazo') handleAPrazo();
-      else handleFinalize(sel);
+      const labels: Record<string, string> = {
+        dinheiro: 'Dinheiro',
+        pix: 'PIX',
+        credito: 'Crédito',
+        debito: 'Débito',
+        prazo: 'A Prazo'
+      };
+      initiateFinalize(sel, labels[sel] || sel);
     };
 
     const handler = (e: KeyboardEvent) => {
@@ -652,10 +660,21 @@ export default function PDV() {
         String(now.getMonth()+1).padStart(2,'0') +
         String(now.getFullYear())
       );
+      
+      // Auto-hide success message after 3 seconds
+      setTimeout(() => setVendaSuccess(null), 3000);
     } catch (err: any) {
       const msg = err?.message || String(err);
       console.error("Erro ao processar venda:", msg);
       alert("Erro ao processar venda: " + msg);
+    }
+  };
+
+  const initiateFinalize = (metodo: string, label: string) => {
+    if (metodo === 'prazo') {
+      handleAPrazo();
+    } else {
+      setShowConfirmFinalize({ metodo, label });
     }
   };
 
@@ -1237,7 +1256,7 @@ export default function PDV() {
                 { id: 'credito'  as CheckoutOption, label: 'Crédito',  sub: 'Cartão de crédito',        icon: CreditCard },
                 { id: 'debito'   as CheckoutOption, label: 'Débito',   sub: 'Cartão de débito',         icon: Smartphone },
               ] as const).map(m => (
-                <button key={m.id} onClick={() => handleFinalize(m.id)} className={coBtn(m.id)}>
+                <button key={m.id} onClick={() => initiateFinalize(m.id, m.label)} className={coBtn(m.id)}>
                   <div className={`w-10 h-10 rounded-lg flex items-center justify-center shrink-0 ${coSel(m.id) ? 'bg-white/20' : 'bg-luxury-orange/10'}`}>
                     <m.icon size={20} className={coSel(m.id) ? 'text-white' : 'text-luxury-orange'} />
                   </div>
@@ -1328,6 +1347,48 @@ export default function PDV() {
                 className="btn-primary flex-1 h-12 disabled:opacity-40 disabled:cursor-not-allowed"
               >
                 Confirmar
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
+
+      {/* Modal Confirmação Finalização */}
+      {showConfirmFinalize && createPortal(
+        <div className="fixed inset-0 z-[300] flex items-center justify-center p-6 bg-black/90 backdrop-blur-md"
+          onClick={e => { if (e.target === e.currentTarget) setShowConfirmFinalize(null); }}>
+          <div className="glass-card w-full max-w-sm p-8 border-luxury-orange/50 text-center relative overflow-hidden">
+            <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-transparent via-luxury-orange to-transparent"></div>
+            
+            <div className="inline-flex p-4 rounded-full bg-luxury-orange/10 text-luxury-orange mb-6">
+              <Banknote size={48} className="animate-pulse" />
+            </div>
+
+            <h3 className="text-3xl font-black italic text-white uppercase mb-2">Confirmar Venda</h3>
+            <p className="text-white/60 mb-6 font-bold tracking-tight">
+              Deseja finalizar a venda no <span className="text-luxury-orange">{showConfirmFinalize.label.toUpperCase()}</span>?
+            </p>
+
+            <div className="bg-white/5 rounded-2xl p-6 mb-8 border border-white/5">
+              <p className="text-xs text-white/30 uppercase font-black tracking-widest mb-1">Total a Receber</p>
+              <p className="text-4xl font-black text-luxury-orange">R$ {total.toFixed(2)}</p>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <button
+                onClick={() => setShowConfirmFinalize(null)}
+                className="px-6 py-4 rounded-xl bg-white/5 text-white/40 hover:bg-white/10 hover:text-white font-black uppercase tracking-widest text-xs transition-all"
+              >
+                Voltar (ESC)
+              </button>
+              <button
+                ref={finalizeConfirmRef}
+                autoFocus
+                onClick={() => { handleFinalize(showConfirmFinalize.metodo); setShowConfirmFinalize(null); }}
+                className="px-6 py-4 rounded-xl bg-luxury-orange text-black hover:bg-luxury-orange-light font-black uppercase tracking-widest text-xs transition-all shadow-[0_0_20px_rgba(255,102,0,0.3)] active:scale-95"
+              >
+                Confirmar (ENTER)
               </button>
             </div>
           </div>
