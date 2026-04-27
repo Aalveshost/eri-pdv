@@ -1,24 +1,25 @@
 import { useState, useEffect, useRef } from "react";
+import { 
+  Search, ShoppingCart, User, Plus, Minus, X, Check, Trash2, 
+  ChevronRight, ArrowLeft, ArrowRight, Save, Banknote, QrCode, 
+  CreditCard, Smartphone, Clock, Calculator, Calendar
+} from "lucide-react";
 import { createPortal } from "react-dom";
-import { CreditCard, Banknote, QrCode, X, Pencil, Trash2, Smartphone, Clock } from "lucide-react";
 import { useDatabase } from "../hooks/useDatabase";
-import { useScanner } from "../hooks/useScanner";
+import { formatCurrency, formatDateBR, isValidBrDate } from "../utils/formatters";
 import { processarVendaFIFO } from "../utils/fifoEngine";
-import { normalizeText } from "../utils/text";
-import { formatCurrency, parseCurrencyToNumber, handleCurrencyInput } from "../utils/currency";
+import { invoke } from "@tauri-apps/api/core";
 
-// Module-level flag: set by Layout when user presses Enter on PDV sidebar link
-// Checked on mount to decide whether to auto-focus the date input
-export let pdvShouldFocusOnMount = false;
-export function setPdvShouldFocusOnMount(val: boolean) { pdvShouldFocusOnMount = val; }
-
-// Interceptor: Layout calls this before navigating away from PDV.
-// If PDV has items in cart, it shows the exit confirm modal and returns true (blocked).
-// Returns false if navigation can proceed freely.
+// Temporary global to avoid circular dependencies if needed, or just standard state
+export let pdvModalOpen = false;
 export let pdvNavigateAwayInterceptor: (() => boolean) | null = null;
 
-// True while any PDV modal/popup is open — Layout skips its key handling
-export let pdvModalOpen = false;
+interface Product {
+  id: number;
+  nome: string;
+  preco_venda: number;
+  codigo_barras: string | null;
+}
 
 interface CartItem {
   id: number;
@@ -27,227 +28,180 @@ interface CartItem {
   quantidade: number;
 }
 
+interface Cliente {
+  id: number;
+  nome: string;
+  telefone: string | null;
+}
+
+type PDVStage = 'date' | 'selling' | 'checkout';
+type CheckoutOption = 'dinheiro' | 'pix' | 'credito' | 'debito' | 'prazo';
+
 export default function PDV() {
   const { db } = useDatabase();
-  const getTodayDigits = () => {
-    const now = new Date();
-    const d = String(now.getDate()).padStart(2, '0');
-    const m = String(now.getMonth() + 1).padStart(2, '0');
-    const y = String(now.getFullYear());
-    return d + m + y;
-  };
-
-  const [stage, setStage] = useState<'date' | 'selling' | 'checkout'>('date');
-  const [cart, setCart] = useState<CartItem[]>([]);
-  const [search, setSearch] = useState("");
+  const [stage, setStage] = useState<PDVStage>('date');
   const [vendaDate, setVendaDate] = useState(formatDateBR(new Date()));
-  const [dateDigits, setDateDigits] = useState(getTodayDigits().padEnd(8, '_'));
+  const [dateDigits, setDateDigits] = useState(new Date().toLocaleDateString('pt-BR').replace(/\D/g, ''));
+  
+  // Selling state
+  const [search, setSearch] = useState("");
+  const [products, setProducts] = useState<Product[]>([]);
+  const [cart, setCart] = useState<CartItem[]>([]);
+  const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
   const [showQuantityModal, setShowQuantityModal] = useState(false);
   const [quantityInput, setQuantityInput] = useState("1.000");
-  const [selectedProduct, setSelectedProduct] = useState<any>(null);
-  const [products, setProducts] = useState<any[]>([]);
-  const [editingItemId, setEditingItemId] = useState<number | null>(null);
-  const [editingTotalInput, setEditingTotalInput] = useState("0,00");
-  const [focusedZone, setFocusedZone] = useState<'products' | 'cart' | null>(null);
+  
+  // Navigation state
+  const [focusedZone, setFocusedZone] = useState<'products' | 'cart'>('products');
+  const [focusedProductIndex, setFocusedProductIndex] = useState<number | null>(null);
+  const focusedProductIndexRef = useRef<number | null>(null);
   const [focusedCartIndex, setFocusedCartIndex] = useState<number | null>(null);
   const [focusedCartAction, setFocusedCartAction] = useState<'edit' | 'delete' | null>(null);
   const [confirmDeleteIdx, setConfirmDeleteIdx] = useState<number | null>(null);
-  const [focusedProductIndex, setFocusedProductIndex] = useState<number | null>(null);
-  const [showExitConfirm, setShowExitConfirm] = useState(false);
-  const [exitConfirmSelected, setExitConfirmSelected] = useState<'exit' | 'continue'>('exit');
-  // checkout keyboard nav: 'prazo'(row0) | 'dinheiro'(row1,col0) | 'pix'(row1,col1) | 'credito'(row2,col0) | 'debito'(row2,col1)
-  type CheckoutOption = 'prazo' | 'dinheiro' | 'pix' | 'credito' | 'debito';
-  const [checkoutSelected, setCheckoutSelected] = useState<CheckoutOption>('prazo');
-  const [dateError, setDateError] = useState("");
+  
+  // Checkout state
+  const [checkoutSelected, setCheckoutSelected] = useState<CheckoutOption>('dinheiro');
   const [showClienteModal, setShowClienteModal] = useState(false);
-  const [clientes, setClientes] = useState<{id:number;nome:string;telefone:string|null}[]>([]);
-  const [clienteSearch, setClienteSearch] = useState('');
-  const [clienteSelecionado, setClienteSelecionado] = useState<{id:number;nome:string}|null>(null);
-  const [clienteFocusedIdx, setClienteFocusedIdx] = useState<number>(-1);
+  const [clientes, setClientes] = useState<Cliente[]>([]);
+  const [clienteSearch, setClienteSearch] = useState("");
+  const [clienteSelecionado, setClienteSelecionado] = useState<{id: number, nome: string} | null>(null);
+  const [clienteFocusedIdx, setClienteFocusedIdx] = useState(-1);
+  const [showExitConfirm, setShowExitConfirm] = useState(false);
+  const [exitConfirmSelected, setExitConfirmSelected] = useState<'exit' | 'continue'>('continue');
+
+  // Refs
+  const productFocusTrapRef = useRef<HTMLButtonElement>(null);
+  const cartFocusTrapRef = useRef<HTMLButtonElement>(null);
+  const modalQuantityRef = useRef<HTMLInputElement>(null);
+  const addBtnRef = useRef<HTMLButtonElement>(null);
+  const editingItemIdRef = useRef<number | null>(null);
+  const [editingItemId, setEditingItemId] = useState<number | null>(null);
+  const editingItemPrecoRef = useRef<number>(0);
+  const [editingTotalInput, setEditingTotalInput] = useState("");
   const clienteListRef = useRef<HTMLDivElement>(null);
   const clienteItemRefs = useRef<(HTMLButtonElement | null)[]>([]);
   const [vendaSuccess, setVendaSuccess] = useState<string|null>(null);
-  const [showConfirmFinalize, setShowConfirmFinalize] = useState<{ metodo: string; label: string } | null>(null);
-  const finalizeConfirmRef = useRef<HTMLButtonElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const dateInputRef = useRef<HTMLInputElement>(null);
-  const modalQuantityRef = useRef<HTMLInputElement>(null);
-  const addBtnRef = useRef<HTMLButtonElement>(null);
-  const cartQuantityRef = useRef<HTMLInputElement>(null);
-  const cartTotalRef = useRef<HTMLInputElement>(null);
-  const cartFocusTrapRef = useRef<HTMLDivElement>(null);
-  const productFocusTrapRef = useRef<HTMLDivElement>(null);
-  const editingItemPrecoRef = useRef<number>(0);
-  const editingItemIdRef = useRef<number | null>(null);
-  const [lastAddedId, setLastAddedId] = useState<number | null>(null);
-  const hasUserEnteredPDV = useRef(pdvShouldFocusOnMount);
-  const focusedProductIndexRef = useRef<number | null>(null);
 
-  function formatDateBR(date: Date) {
-    const d = String(date.getDate()).padStart(2, '0');
-    const m = String(date.getMonth() + 1).padStart(2, '0');
-    const y = date.getFullYear();
-    return `${d}/${m}/${y}`;
-  }
+  // Sync ref for key handlers
+  useEffect(() => { editingItemIdRef.current = editingItemId; }, [editingItemId]);
 
+  // Total
   const total = cart.reduce((acc, item) => acc + (item.preco * item.quantidade), 0);
 
-  // Search for products (only when in selling stage)
+  // Load products on search
   useEffect(() => {
-    if (stage !== 'selling') return;
-
-    const loadProducts = async () => {
-      if (!db || search.length === 0) {
+    if (!db) return;
+    const searchProducts = async () => {
+      if (search.trim().length === 0) {
         setProducts([]);
         return;
       }
-
-      try {
-        const terms = search.split(/\s+/).filter(t => t.length > 0);
-        const results: any[] = await db.select(
-          "SELECT id, nome, preco_venda, codigo_barras FROM produtos WHERE ativo = 1 ORDER BY nome"
-        );
-
-        // First try exact barcode match
-        const barcodeMatch = results.find(p => p.codigo_barras === search);
-        if (barcodeMatch) {
-          setSelectedProduct(barcodeMatch);
-          setShowQuantityModal(true);
-          setSearch("");
-          return;
-        }
-
-        // Then try name search
-        const filtered = results.filter(product => {
-          const productNameNormalized = normalizeText(product.nome);
-          return terms.every(term => productNameNormalized.includes(normalizeText(term)));
-        });
-
-        if (filtered.length > 0) {
-          setProducts(filtered);
-          setFocusedProductIndex(0);
-          focusedProductIndexRef.current = 0;
-        } else {
-          setProducts([]);
-          setFocusedProductIndex(null);
-          focusedProductIndexRef.current = null;
-        }
-      } catch (err) {
-        console.error("Erro ao buscar produtos:", err);
+      const isBarcode = /^\d{8,14}$/.test(search);
+      let query = "SELECT id, nome, preco_venda, codigo_barras FROM produtos WHERE ativo = 1 ";
+      let params: any[] = [];
+      
+      if (isBarcode) {
+        query += "AND codigo_barras = $1";
+        params = [search];
+      } else {
+        query += "AND nome LIKE $1 ORDER BY nome LIMIT 10";
+        params = [`%${search}%`];
+      }
+      
+      const rows: any[] = await db.select(query, params);
+      setProducts(rows);
+      
+      if (isBarcode && rows.length === 1) {
+        handleProductSelect(rows[0]);
+        setSearch('');
       }
     };
-
-    const timer = setTimeout(loadProducts, 200);
+    const timer = setTimeout(searchProducts, 150);
     return () => clearTimeout(timer);
-  }, [db, search, stage]);
+  }, [search, db]);
 
-  // Barcode integration
-  useScanner((code) => {
-    if (stage === 'selling') {
-      setSearch(code);
-    }
-  });
+  // Initial products
+  useEffect(() => {
+    if (!db) return;
+    const loadInitial = async () => {
+      const rows: any[] = await db.select(
+        "SELECT id, nome, preco_venda, codigo_barras FROM produtos WHERE ativo = 1 ORDER BY nome LIMIT 20"
+      );
+      setProducts(rows);
+    };
+    loadInitial();
+  }, [db]);
 
-  const handleProductSelect = (product: any) => {
+  const handleProductSelect = (product: Product) => {
     setSelectedProduct(product);
+    setQuantityInput("1.000");
     setShowQuantityModal(true);
-    setSearch("");
-    setProducts([]);
   };
 
-  const handleAddToCart = () => {
-    const qty = parseFloat(quantityInput.replace(',', '.')) || 1;
+  const addToCart = () => {
+    if (!selectedProduct) return;
+    const qty = parseFloat(quantityInput);
     if (qty <= 0) return;
 
-    setCart(prev => {
-      const exists = prev.find(item => item.id === selectedProduct.id);
-      if (exists) {
-        return prev.map(item =>
-          item.id === selectedProduct.id ? { ...item, quantidade: item.quantidade + (parseFloat(quantityInput.replace(',', '.')) || 1) } : item
-        );
-      }
-      return [...prev, {
-        id: selectedProduct.id,
-        nome: selectedProduct.nome,
-        preco: selectedProduct.preco_venda,
-        quantidade: parseFloat(quantityInput.replace(',', '.')) || 1
-      }];
-    });
-
-    setLastAddedId(selectedProduct.id);
-    setTimeout(() => setLastAddedId(null), 600);
-
+    if (editingItemId !== null) {
+      setCart(prev => prev.map(item => 
+        item.id === editingItemId 
+          ? { ...item, quantidade: qty, preco: editingItemPrecoRef.current } 
+          : item
+      ));
+      setEditingItemId(null);
+    } else {
+      setCart(prev => {
+        const existing = prev.find(item => item.id === selectedProduct.id);
+        if (existing) {
+          return prev.map(item => 
+            item.id === selectedProduct.id 
+              ? { ...item, quantidade: item.quantidade + qty } 
+              : item
+          );
+        }
+        return [...prev, {
+          id: selectedProduct.id,
+          nome: selectedProduct.nome,
+          preco: selectedProduct.preco_venda,
+          quantidade: qty
+        }];
+      });
+    }
+    
     setShowQuantityModal(false);
     setQuantityInput("1.000");
     setSelectedProduct(null);
-    searchInputRef.current?.focus();
+    setTimeout(() => searchInputRef.current?.focus(), 0);
   };
 
-  // On mount: focus if user entered via Enter; reset module flag
+  // Keyboard navigation for date stage
   useEffect(() => {
-    if (pdvShouldFocusOnMount) {
-      hasUserEnteredPDV.current = true;
-      if (stage === 'date' && dateInputRef.current) {
-        dateInputRef.current.focus();
-        dateInputRef.current.setSelectionRange(0, 0);
+    if (stage !== 'date') return;
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === 'Enter') {
+        if (isValidBrDate(vendaDate)) {
+          setStage('products' as any); // Transition to selling
+          setStage('selling');
+        }
       }
-      setPdvShouldFocusOnMount(false);
-    }
-    return () => { setPdvShouldFocusOnMount(false); };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [stage, vendaDate]);
 
-  // Focus date input whenever stage is 'date'
-  useEffect(() => {
-    if (stage === 'date' && dateInputRef.current) {
-      setTimeout(() => {
-        dateInputRef.current?.focus();
-        dateInputRef.current?.setSelectionRange(0, 0);
-      }, 50);
-    }
-    if (stage === 'selling') {
-      setFocusedZone(null);
-      setTimeout(() => searchInputRef.current?.focus(), 0);
-    }
-  }, [stage]);
-
-  // Re-focus search input when exit confirm modal closes (ESC = continuar)
-  useEffect(() => {
-    if (!showExitConfirm && stage === 'selling') {
-      setTimeout(() => searchInputRef.current?.focus(), 0);
-    }
-  }, [showExitConfirm, stage]);
-
-  // Cliente modal keyboard navigation
+  // Keyboard for Cliente Modal
   useEffect(() => {
     if (!showClienteModal) return;
-    setClienteFocusedIdx(-1);
-  }, [showClienteModal, clienteSearch]);
-
-  useEffect(() => {
-    if (!showClienteModal) return;
-    const filtered = clientes.filter(c =>
-      c.nome.includes(clienteSearch) || (c.telefone || '').includes(clienteSearch)
-    );
     const handler = (e: KeyboardEvent) => {
       if (e.key === 'ArrowDown') {
-        e.preventDefault(); e.stopPropagation();
-        setClienteFocusedIdx(prev => {
-          const next = Math.min(prev + 1, filtered.length - 1);
-          const item = filtered[next];
-          if (item) setClienteSelecionado({ id: item.id, nome: item.nome });
-          setTimeout(() => clienteItemRefs.current[next]?.scrollIntoView({ block: 'nearest' }), 0);
-          return next;
-        });
+        e.preventDefault();
+        setClienteFocusedIdx(prev => Math.min(prev + 1, clientes.length - 1));
       } else if (e.key === 'ArrowUp') {
-        e.preventDefault(); e.stopPropagation();
-        setClienteFocusedIdx(prev => {
-          const next = Math.max(prev - 1, 0);
-          const item = filtered[next];
-          if (item) setClienteSelecionado({ id: item.id, nome: item.nome });
-          setTimeout(() => clienteItemRefs.current[next]?.scrollIntoView({ block: 'nearest' }), 0);
-          return next;
-        });
+        e.preventDefault();
+        setClienteFocusedIdx(prev => Math.max(prev - 1, 0));
       } else if (e.key === 'Enter') {
         e.preventDefault(); e.stopPropagation();
         if (clienteSelecionado) handleFinalize('prazo', clienteSelecionado.id);
@@ -275,14 +229,8 @@ export default function PDV() {
     };
 
     const confirmSelected = (sel: string) => {
-      const labels: Record<string, string> = {
-        dinheiro: 'Dinheiro',
-        pix: 'PIX',
-        credito: 'Crédito',
-        debito: 'Débito',
-        prazo: 'A Prazo'
-      };
-      initiateFinalize(sel, labels[sel] || sel);
+      if (sel === 'prazo') handleAPrazo();
+      else handleFinalize(sel);
     };
 
     const handler = (e: KeyboardEvent) => {
@@ -354,34 +302,6 @@ export default function PDV() {
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
   }, [showExitConfirm, exitConfirmSelected]);
-
-  // Focus quantity modal: Select everything for quick replacement
-  useEffect(() => {
-    if (showQuantityModal && modalQuantityRef.current) {
-      setTimeout(() => {
-        modalQuantityRef.current?.focus();
-        modalQuantityRef.current?.select();
-      }, 50);
-    }
-  }, [showQuantityModal]);
-
-  // Keep ref in sync so capture-phase handler always sees latest value
-  useEffect(() => { editingItemIdRef.current = editingItemId; }, [editingItemId]);
-
-  useEffect(() => {
-    if (editingItemId && cartQuantityRef.current) {
-      setTimeout(() => {
-        cartQuantityRef.current?.focus();
-        cartQuantityRef.current?.select();
-      }, 50);
-    }
-  }, [editingItemId]);
-
-  useEffect(() => {
-    if (editingItemId === null) return;
-    const q = parseFloat(quantityInput) || 0;
-    setEditingTotalInput(formatCurrency(editingItemPrecoRef.current * q));
-  }, [quantityInput, editingItemId]);
 
   const handleQuantityKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     const input = e.currentTarget;
@@ -504,7 +424,8 @@ export default function PDV() {
           if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') { /* visual only */ }
           else if (e.key === 'Enter' || e.key === 'y' || e.key === 'Y') {
             setCart(prev => prev.filter((_, i) => i !== confirmDeleteIdx));
-            setFocusedCartIndex(null); setFocusedCartAction(null); setConfirmDeleteIdx(null);
+            setConfirmDeleteIdx(null); setFocusedCartAction(null);
+            setTimeout(() => cartFocusTrapRef.current?.focus(), 0);
             enterProductZone();
           } else if (e.key === 'Escape' || e.key === 'n' || e.key === 'N') {
             setConfirmDeleteIdx(null); setFocusedCartAction(null);
@@ -670,14 +591,6 @@ export default function PDV() {
     }
   };
 
-  const initiateFinalize = (metodo: string, label: string) => {
-    if (metodo === 'prazo') {
-      handleAPrazo();
-    } else {
-      setShowConfirmFinalize({ metodo, label });
-    }
-  };
-
   const handleAPrazo = async () => {
     await loadClientes();
     setClienteSearch('');
@@ -685,468 +598,331 @@ export default function PDV() {
     setShowClienteModal(true);
   };
 
-  // Stage: Date Selection
+  const handleDateKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    const input = e.currentTarget;
+    const pos = input.selectionStart ?? 0;
+
+    if (e.key === 'Enter') {
+      if (isValidBrDate(vendaDate)) {
+        setStage('selling');
+        setTimeout(() => searchInputRef.current?.focus(), 0);
+      }
+      return;
+    }
+
+    if (e.key === 'ArrowDown') {
+      if (isValidBrDate(vendaDate)) {
+        setStage('selling');
+        setTimeout(() => searchInputRef.current?.focus(), 0);
+      }
+      return;
+    }
+
+    if (/^\d$/.test(e.key)) {
+      e.preventDefault();
+      if (pos >= 10) return;
+      const nd = dateDigits.slice(0, pos) + e.key + dateDigits.slice(pos + 1);
+      setDateDigits(nd);
+      const br = nd.slice(0,2)+'/'+nd.slice(2,4)+'/'+nd.slice(4,8);
+      setVendaDate(br);
+      const np = pos + 1;
+      const dispPos = np <= 2 ? np : np <= 4 ? np+1 : np+2;
+      setTimeout(() => input.setSelectionRange(dispPos, dispPos), 0);
+    }
+    
+    if (e.key === 'Backspace') {
+      e.preventDefault();
+      if (pos === 0) return;
+      const rawPos = pos <= 2 ? pos : pos <= 5 ? pos-1 : pos-2;
+      const nd = dateDigits.slice(0, rawPos - 1) + '_' + dateDigits.slice(rawPos);
+      setDateDigits(nd);
+      const br = nd.slice(0,2)+'/'+nd.slice(2,4)+'/'+nd.slice(4,8);
+      setVendaDate(br);
+      const pr = rawPos - 1;
+      const dispPos = pr <= 2 ? pr : pr <= 4 ? pr+1 : pr+2;
+      setTimeout(() => input.setSelectionRange(dispPos, dispPos), 0);
+    }
+  };
+
   if (stage === 'date') {
-    // dateDigits é sempre string de 8 chars com dígitos ou '_'
-    // ex: "11042026" ou "1_042026"
-
-    const isValidDate = (day: number, month: number, year: number): boolean => {
-      if (day < 1 || day > 31 || month < 1 || month > 12) return false;
-      const daysInMonth = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
-      if ((year % 4 === 0 && year % 100 !== 0) || year % 400 === 0) daysInMonth[1] = 29;
-      return day <= daysInMonth[month - 1];
-    };
-
-    // Formata para exibição com barras
-    const displayValue = dateDigits.slice(0, 2) + '/' + dateDigits.slice(2, 4) + '/' + dateDigits.slice(4, 8);
-
-    // Converte posição no display (com barras) para posição nos dígitos
-    const displayToDigitPos = (displayPos: number) => {
-      if (displayPos <= 2) return displayPos;
-      if (displayPos <= 5) return displayPos - 1;
-      return displayPos - 2;
-    };
-
-    // Converte posição nos dígitos para posição no display
-    const digitToDisplayPos = (digitPos: number) => {
-      if (digitPos <= 2) return digitPos;
-      if (digitPos <= 4) return digitPos + 1;
-      return digitPos + 2;
-    };
-
     return (
-      <div className="flex flex-col h-full justify-center items-center gap-8">
-        <div className="text-center mb-8">
-          <h2 className="text-4xl font-black italic text-luxury-orange uppercase mb-2">Data da Venda</h2>
-          <p className="text-white/40">Digite a data (DD/MM/YYYY)</p>
-        </div>
-
-        <div className="text-center">
+      <div className="flex flex-col h-full justify-center items-center">
+        <h2 className="text-5xl font-black italic text-luxury-orange uppercase mb-2">Data da Venda</h2>
+        <p className="text-white/20 uppercase tracking-widest text-xs font-bold mb-10">(DD/MM/YYYY)</p>
+        
+        <div className="relative group">
           <input
             ref={dateInputRef}
+            autoFocus
             type="text"
-            value={displayValue}
+            className="bg-transparent border-b-4 border-white/10 text-6xl font-mono text-white text-center py-4 outline-none focus:border-luxury-orange transition-all w-[400px] tracking-widest"
+            value={vendaDate}
+            onKeyDown={handleDateKeyDown}
             onChange={() => {}}
-            onKeyDown={(e) => {
-              const input = e.currentTarget;
-              const displayPos = input.selectionStart ?? 0;
-              // Converte posição do display para posição nos dígitos
-              const pos = displayToDigitPos(displayPos);
-
-              if (e.key === 'Escape' || e.key === 'ArrowUp' || e.key === 'ArrowDown' || (e.key === 'ArrowLeft' && displayPos === 0)) {
-                e.preventDefault();
-                e.stopPropagation();
-                
-                // Reset to today's date when escaping to sidebar
-                setDateDigits(getTodayDigits());
-                setDateError('');
-                
-                const activeSidebarLink = document.querySelector('aside nav a[class*="bg-luxury-orange"]') as HTMLElement;
-                activeSidebarLink?.focus();
-                return;
-              }
-
-              if (e.key === 'Enter') {
-                e.preventDefault();
-                if (dateDigits.includes('_')) {
-                  setDateError('Preencha a data completa.');
-                  return;
-                }
-                const d = parseInt(dateDigits.slice(0, 2));
-                const m = parseInt(dateDigits.slice(2, 4));
-                const y = parseInt(dateDigits.slice(4, 8));
-
-                if (d < 1 || d > 31) {
-                  setDateError(`Dia inválido: ${d}. Deve ser entre 01 e 31.`);
-                } else if (m < 1 || m > 12) {
-                  setDateError(`Mês inválido: ${m}. Deve ser entre 01 e 12.`);
-                } else if (!isValidDate(d, m, y)) {
-                  setDateError(`${String(d).padStart(2,'0')}/${String(m).padStart(2,'0')}/${y} não existe.`);
-                } else {
-                  const dd = dateDigits.slice(0, 2);
-                  const mm = dateDigits.slice(2, 4);
-                  const yyyy = dateDigits.slice(4, 8);
-                  setVendaDate(`${dd}/${mm}/${yyyy}`);
-                  setStage('selling');
-                  setDateError('');
-                }
-                return;
-              }
-
-              if (/^\d$/.test(e.key)) {
-                e.preventDefault();
-                if (pos >= 8) return;
-                const newDigits = dateDigits.slice(0, pos) + e.key + dateDigits.slice(pos + 1);
-                setDateDigits(newDigits);
-                setDateError('');
-                const nextDigitPos = pos + 1;
-                const nextDisplayPos = digitToDisplayPos(nextDigitPos);
-                setTimeout(() => {
-                  input.setSelectionRange(nextDisplayPos, nextDisplayPos);
-                }, 0);
-                return;
-              }
-
-              if (e.key === 'Backspace') {
-                e.preventDefault();
-                if (pos === 0) return;
-                const newDigits = dateDigits.slice(0, pos - 1) + '_' + dateDigits.slice(pos);
-                setDateDigits(newDigits);
-                const prevDigitPos = pos - 1;
-                const prevDisplayPos = digitToDisplayPos(prevDigitPos);
-                setTimeout(() => {
-                  input.setSelectionRange(prevDisplayPos, prevDisplayPos);
-                }, 0);
-                return;
-              }
-
-              if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') return;
-              e.preventDefault();
-            }}
-            maxLength={10}
-            className="luxury-input w-80 h-16 text-center text-3xl font-black tracking-wider"
-            style={{ fontFamily: 'monospace' }}
           />
-          {dateError && (
-            <p className="text-red-500 text-sm mt-4">{dateError}</p>
-          )}
+          <div className="absolute -bottom-10 left-0 w-full text-center opacity-0 group-focus-within:opacity-100 transition-opacity">
+            <p className="text-white/40 text-xs font-bold uppercase tracking-widest">Pressione ENTER para continuar</p>
+          </div>
         </div>
-
-        <p className="text-white/40 text-sm">Pressione ENTER para continuar</p>
       </div>
     );
   }
 
-  // Stage: Selling
   if (stage === 'selling') {
-
     return (
-      <div className="flex flex-col h-full gap-4 p-4">
-        {/* Header */}
-        <header className="flex justify-between items-start mb-4">
-          <div>
-            <h2 className="text-3xl font-bold italic text-luxury-orange uppercase">VENDA - {vendaDate}</h2>
-            <p className="text-white/40 text-xs mt-1">Escaneie ou digite o código/nome do produto</p>
-          </div>
-          <div className="glass-card px-6 py-4 flex flex-col items-end">
-            <span className="text-[10px] uppercase text-white/40 font-bold">TOTAL</span>
-            <span className="text-3xl font-black text-luxury-orange">R$ {total.toFixed(2)}</span>
-          </div>
-        </header>
-
-        {/* Atalhos Info */}
-        <div className="glass-card px-4 py-2 flex gap-6 text-xs font-bold text-white/40">
-          <span><span className="text-luxury-orange">F1</span> = Finalizar</span>
-          <span><span className="text-luxury-orange">TAB</span> = Alternar zona</span>
-          <span><span className="text-luxury-orange">↑↓</span> = Navegar</span>
-          <span><span className="text-luxury-orange">ENTER</span> = Adicionar / Editar</span>
-          <span><span className="text-luxury-orange">ESC</span> = Sair</span>
-        </div>
-
-        <div className="flex flex-1 gap-4 overflow-hidden">
-          {/* Left: Search */}
-          <div className={`flex-1 glass-card flex flex-col transition-all ${focusedZone === 'products' ? 'ring-1 ring-luxury-orange/30' : ''}`}>
-            {/* Invisible focus trap for product zone */}
-            <div ref={productFocusTrapRef} tabIndex={-1} className="outline-none w-0 h-0 overflow-hidden" />
-              <div className="p-4 border-b border-white/5">
-                <input
-                  ref={searchInputRef}
-                  type="text"
-                  placeholder="Código ou nome (máx 40 caracteres)..."
-                  className="luxury-input w-full h-12 text-lg"
-                  value={search}
-                  onChange={e => {
-                    let val = e.target.value.toUpperCase().replace(/[^A-Z0-9 ]/g, '');
-                    if (val.length > 40) val = val.slice(0, 40);
-                    setSearch(val);
-                  }}
-                  maxLength={40}
-                  onKeyDown={e => {
-                    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') e.preventDefault();
-                  }}
-                />
-                {products.length > 0 && (
-                  <p className="text-white/40 text-xs mt-2">{products.length} resultado(s)</p>
-                )}
-              </div>
-
-              {/* Product List */}
-              <div className="flex-1 overflow-auto p-3 space-y-2">
-                {products.length > 0 ? (
-                  products.map((product, pidx) => (
-                    <button
-                      key={product.id}
-                      onClick={() => { setFocusedProductIndex(null); handleProductSelect(product); }}
-                      className={`w-full p-3 rounded-lg text-left transition-all border relative overflow-hidden ${
-                        focusedProductIndex === pidx
-                          ? 'bg-luxury-orange/20 border-luxury-orange shadow-lg shadow-luxury-orange/10 scale-[1.01]'
-                          : 'bg-white/5 hover:bg-white/10 border-white/5 hover:border-white/10'
-                      }`}
-                    >
-                      {focusedProductIndex === pidx && (
-                        <div className="absolute left-0 top-0 bottom-0 w-1 bg-luxury-orange shadow-[0_0_10px_rgba(255,107,0,0.5)]" />
-                      )}
-                      <h4 className={`font-bold transition-colors ${focusedProductIndex === pidx ? 'text-luxury-orange' : 'text-white'}`}>
-                        {product.nome}
-                      </h4>
-                      <div className="flex justify-between text-white/40 text-xs mt-1">
-                        <span>Cód: {product.codigo_barras || 'N/A'}</span>
-                        <span className={`font-black ${focusedProductIndex === pidx ? 'text-white' : 'text-luxury-orange'}`}>
-                          R$ {product.preco_venda.toFixed(2)}
-                        </span>
-                      </div>
-                    </button>
-                  ))
-                ) : search.length > 0 ? (
-                  <div className="h-full flex items-center justify-center text-white/10 italic">
-                    <p>Nenhum produto</p>
-                  </div>
-                ) : null}
-              </div>
-
-              <div className="p-3 border-t border-white/5">
-                <button
-                  onClick={() => setStage('checkout')}
-                  disabled={cart.length === 0}
-                  className="btn-primary w-full h-10 text-sm uppercase disabled:opacity-30 disabled:grayscale"
-                >
-                  Finalizar Venda
-                </button>
+      <div className="flex h-full gap-4 overflow-hidden">
+        {/* Left: Search & Results */}
+        <div className="flex-1 flex flex-col gap-4 overflow-hidden">
+          <div className="flex gap-4">
+            <div className="glass-card flex-1 flex items-center px-4 py-3 gap-3">
+              <Search className="text-luxury-orange" size={24} />
+              <input
+                ref={searchInputRef}
+                autoFocus
+                type="text"
+                placeholder="Pesquisar produto ou código de barras..."
+                className="bg-transparent flex-1 text-xl outline-none font-bold placeholder:text-white/20 uppercase"
+                value={search}
+                onChange={e => setSearch(e.target.value.toUpperCase())}
+              />
+              <div className="flex items-center gap-2 px-3 py-1 rounded-lg bg-white/5 border border-white/10">
+                <span className="text-[10px] font-black text-white/40 uppercase">F1</span>
+                <span className="text-[10px] font-black text-white/40 uppercase">Pagar</span>
               </div>
             </div>
 
-          {/* Right: Cart */}
-          <div className={`flex-[0.8] glass-card flex flex-col transition-all ${focusedZone === 'cart' ? 'ring-1 ring-luxury-orange/30' : ''}`}>
-            {/* Invisible focus trap — keeps isMainFocused=true after edit confirmation */}
-            <div ref={cartFocusTrapRef} tabIndex={-1} className="outline-none w-0 h-0 overflow-hidden" />
-            <div className="p-4 border-b border-white/5">
-              <h3 className="text-lg font-bold uppercase italic text-luxury-orange">CARRINHO ({cart.length})</h3>
+            <div className="glass-card px-5 py-3 flex flex-col items-center justify-center min-w-[120px]">
+              <p className="text-[10px] uppercase text-white/40 font-bold mb-1">Itens</p>
+              <p className="text-2xl font-black">{cart.length}</p>
             </div>
+          </div>
 
-            <div className="flex-1 overflow-auto p-3 space-y-2">
-              {cart.length === 0 ? (
-                <div className="h-full flex items-center justify-center text-white/10 italic">
-                  <p className="text-xs">VAZIO</p>
+          <div className="flex-1 glass-card overflow-hidden flex flex-col">
+            <div className="px-6 py-4 border-b border-white/5 flex justify-between items-center bg-white/5">
+              <h2 className="text-xs font-black uppercase tracking-widest text-white/40">Resultados da Busca</h2>
+              <span className="text-[10px] font-bold text-white/20 uppercase">Setas para navegar</span>
+            </div>
+            
+            <button ref={productFocusTrapRef} className="sr-only" tabIndex={-1} />
+            <div className="flex-1 overflow-y-auto custom-scrollbar">
+              {products.length === 0 ? (
+                <div className="flex flex-col items-center justify-center h-full opacity-20 p-10 text-center">
+                  <Calculator size={64} className="mb-4" />
+                  <p className="uppercase font-black italic text-xl tracking-tighter">Pronto para a próxima venda</p>
+                  <p className="text-sm font-bold mt-2">Digite o nome ou use o leitor de barras</p>
                 </div>
               ) : (
-                cart.map((item, idx) => (
-                  <div
-                    key={`${item.id}-${idx}`}
-                    className={`p-3 rounded-lg border transition-all cursor-pointer ${
-                      focusedCartIndex === idx
-                        ? 'bg-luxury-orange/20 border-luxury-orange/50'
-                        : 'bg-white/5 border-white/5 hover:bg-white/10'
-                    } ${lastAddedId === item.id ? 'animate-item-flash' : ''}`}
-                    onClick={() => { if (editingItemId === item.id) return; setFocusedCartIndex(idx); setFocusedCartAction(null); setConfirmDeleteIdx(null); setEditingItemId(null); }}
-                  >
-                    <div className="flex justify-between items-start mb-1">
-                      <h4 className="font-bold text-sm flex-1 truncate pr-2">{item.nome}</h4>
-                      <span className="text-white/40 text-xs shrink-0">{item.quantidade.toFixed(3)}x</span>
-                    </div>
-                    <div className="flex justify-between text-xs text-white/40">
-                      <span>R$ {item.preco.toFixed(2)}/un</span>
-                      <span className="text-luxury-orange font-black">R$ {(item.preco * item.quantidade).toFixed(2)}</span>
-                    </div>
-
-                    {/* Action icons — shown when item is focused */}
-                    {focusedCartIndex === idx && !editingItemId && confirmDeleteIdx !== idx && (
-                      <div className="mt-2 flex gap-2">
-                        <button
-                          tabIndex={-1}
-                          onClick={e => { 
-                            e.stopPropagation(); 
-                            editingItemPrecoRef.current = Number(item.preco);
-                            setEditingItemId(item.id);
-                            setQuantityInput(item.quantidade.toFixed(3));
-                            setEditingTotalInput(formatCurrency(Number(item.preco) * Number(item.quantidade)));
-                            setFocusedCartAction(null); 
-                          }}
-                          className={`flex-1 flex items-center justify-center gap-1 h-7 rounded text-xs font-bold transition-all ${
-                            focusedCartAction === 'edit'
-                              ? 'bg-luxury-orange text-white'
-                              : 'bg-white/10 hover:bg-luxury-orange/40 text-white/70'
-                          }`}
-                        >
-                          <Pencil size={12} /> Editar
-                        </button>
-                        <button
-                          tabIndex={-1}
-                          onClick={e => { e.stopPropagation(); setConfirmDeleteIdx(idx); setFocusedCartAction('delete'); }}
-                          className={`flex-1 flex items-center justify-center gap-1 h-7 rounded text-xs font-bold transition-all ${
-                            focusedCartAction === 'delete'
-                              ? 'bg-red-500 text-white'
-                              : 'bg-red-500/10 hover:bg-red-500/30 text-red-400'
-                          }`}
-                        >
-                          <Trash2 size={12} /> Remover
-                        </button>
-                      </div>
-                    )}
-
-                    {/* Confirm delete */}
-                    {confirmDeleteIdx === idx && (
-                      <div className="mt-2 flex items-center gap-2">
-                        <span className="text-xs text-white/60 font-bold flex-1">Remover item?</span>
-                        <button
-                          tabIndex={-1}
-                          onClick={e => { e.stopPropagation(); setCart(prev => prev.filter((_, i) => i !== idx)); setFocusedCartIndex(null); setFocusedCartAction(null); setConfirmDeleteIdx(null); setTimeout(() => searchInputRef.current?.focus(), 0); }}
-                          className="px-3 h-7 rounded text-xs font-bold bg-red-500 hover:bg-red-600 text-white transition-all"
-                        >
-                          Sim
-                        </button>
-                        <button
-                          tabIndex={-1}
-                          onClick={e => { e.stopPropagation(); setConfirmDeleteIdx(null); setFocusedCartAction(null); }}
-                          className="px-3 h-7 rounded text-xs font-bold bg-white/10 hover:bg-white/20 text-white/70 transition-all"
-                        >
-                          Não
-                        </button>
-                      </div>
-                    )}
-
-                    {editingItemId === item.id && (
-                      <div className="mt-2 flex flex-col gap-2 p-2 bg-black/40 rounded-lg border border-white/10">
-                        <div className="flex gap-2">
-                          <div className="flex-1">
-                            <label className="text-[10px] uppercase text-white/40 font-bold block mb-1">QTD</label>
-                            <input
-                              type="text"
-                              value={quantityInput}
-                              onChange={e => {
-                                let val = e.target.value.replace(',', '.');
-                                if (!/^\d*\.?\d*$/.test(val)) return;
-                                const parts = val.split('.');
-                                if (parts[0].length > 5) return;
-                                if (parts[1] && parts[1].length > 3) return;
-                                setQuantityInput(val);
-                              }}
-                              ref={cartQuantityRef}
-                              onKeyDown={e => {
-                                e.stopPropagation();
-                                if (e.key === 'Enter') {
-                                  e.preventDefault();
-                                  const qty = parseFloat(quantityInput.replace(',', '.'));
-                                  if (isNaN(qty) || qty <= 0) return;
-                                  const totalVal = parseCurrencyToNumber(editingTotalInput);
-                                  const newPreco = totalVal / qty;
-                                  setCart(prev => prev.map(it => it.id === item.id ? { ...it, quantidade: qty, preco: newPreco } : it));
-                                  setEditingItemId(null);
-                                  setQuantityInput("1.000");
-                                  setFocusedCartIndex(idx);
-                                  setFocusedCartAction(null);
-                                  setTimeout(() => cartFocusTrapRef.current?.focus(), 0);
-                                } else if (e.key === 'Escape') {
-                                  e.preventDefault();
-                                  setEditingItemId(null);
-                                  setQuantityInput("1.000");
-                                  setFocusedCartIndex(idx);
-                                  setFocusedCartAction(null);
-                                  setTimeout(() => cartFocusTrapRef.current?.focus(), 0);
-                                } else if (e.key === 'ArrowRight') {
-                                  e.preventDefault();
-                                  cartTotalRef.current?.focus();
-                                  cartTotalRef.current?.select();
-                                } else {
-                                  handleQuantityKeyDown(e);
-                                }
-                              }}
-                              autoFocus
-                              className="luxury-input w-full h-9 text-xs text-center"
-                            />
-                          </div>
-                          <div className="flex-1">
-                            <label className="text-[10px] uppercase text-white/40 font-bold block mb-1">TOTAL (R$)</label>
-                            <input
-                              type="text"
-                              value={editingTotalInput}
-                              ref={cartTotalRef}
-                              onChange={e => setEditingTotalInput(handleCurrencyInput(e.target.value))}
-                              onKeyDown={e => {
-                                e.stopPropagation();
-                                if (e.key === 'Enter') {
-                                  e.preventDefault();
-                                  const qty = parseFloat(quantityInput.replace(',', '.'));
-                                  if (isNaN(qty) || qty <= 0) return;
-                                  const totalVal = parseCurrencyToNumber(editingTotalInput);
-                                  const newPreco = totalVal / qty;
-                                  setCart(prev => prev.map(it => it.id === item.id ? { ...it, quantidade: qty, preco: newPreco } : it));
-                                  setEditingItemId(null);
-                                  setQuantityInput("1.000");
-                                  setFocusedCartIndex(idx);
-                                  setFocusedCartAction(null);
-                                  setTimeout(() => cartFocusTrapRef.current?.focus(), 0);
-                                } else if (e.key === 'Escape') {
-                                  e.preventDefault();
-                                  setEditingItemId(null);
-                                  setQuantityInput("1.000");
-                                  setFocusedCartIndex(idx);
-                                  setFocusedCartAction(null);
-                                  setTimeout(() => cartFocusTrapRef.current?.focus(), 0);
-                                } else if (e.key === 'ArrowLeft') {
-                                  e.preventDefault();
-                                  cartQuantityRef.current?.focus();
-                                  cartQuantityRef.current?.select();
-                                }
-                              }}
-                              className="luxury-input w-full h-9 text-xs text-center font-bold text-luxury-orange"
-                            />
-                          </div>
+                <div className="grid grid-cols-2 gap-2 p-2">
+                  {products.map((p, idx) => {
+                    const isFocused = focusedZone === 'products' && focusedProductIndex === idx;
+                    return (
+                      <button
+                        key={p.id}
+                        onClick={() => handleProductSelect(p)}
+                        className={`flex flex-col p-4 rounded-2xl text-left transition-all outline-none border ${
+                          isFocused 
+                            ? 'bg-luxury-orange border-luxury-orange shadow-lg shadow-luxury-orange/20 scale-[1.02] z-10' 
+                            : 'bg-white/5 border-white/5 hover:bg-white/10'
+                        }`}
+                      >
+                        <p className={`font-black uppercase text-sm mb-1 leading-tight ${isFocused ? 'text-white' : 'text-white/90'}`}>{p.nome}</p>
+                        <div className="flex justify-between items-end">
+                          <p className={`text-lg font-black ${isFocused ? 'text-white' : 'text-luxury-orange'}`}>
+                            R$ {p.preco_venda.toFixed(2)}
+                          </p>
+                          {p.codigo_barras && (
+                            <p className={`text-[10px] font-mono ${isFocused ? 'text-white/60' : 'text-white/20'}`}>
+                              {p.codigo_barras}
+                            </p>
+                          )}
                         </div>
-                        <p className="text-[9px] text-white/20 italic text-center">ENTER para confirmar</p>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* Right: Cart */}
+        <div className="w-[450px] flex flex-col gap-4 overflow-hidden">
+          <div className="glass-card flex-1 flex flex-col overflow-hidden">
+            <div className="px-6 py-5 border-b border-white/5 flex justify-between items-center bg-white/5">
+              <div className="flex items-center gap-2">
+                <ShoppingCart className="text-luxury-orange" size={18} />
+                <h2 className="text-xs font-black uppercase tracking-widest text-white/40">Carrinho</h2>
+              </div>
+              <p className="text-lg font-black text-white">{cart.length} itens</p>
+            </div>
+
+            <button ref={cartFocusTrapRef} className="sr-only" tabIndex={-1} />
+            <div className="flex-1 overflow-y-auto custom-scrollbar">
+              {cart.length === 0 ? (
+                <div className="flex flex-col items-center justify-center h-full opacity-10 p-10 text-center">
+                  <ShoppingCart size={48} className="mb-4" />
+                  <p className="uppercase font-black text-sm">Carrinho Vazio</p>
+                </div>
+              ) : (
+                <div className="flex flex-col">
+                  {cart.map((item, idx) => {
+                    const isFocused = focusedZone === 'cart' && focusedCartIndex === idx;
+                    const isDeleting = confirmDeleteIdx === idx;
+                    return (
+                      <div key={item.id} className="relative">
+                        <div 
+                          className={`flex flex-col px-6 py-4 border-b border-white/5 transition-all outline-none ${
+                            isFocused ? 'bg-white/10' : ''
+                          }`}
+                        >
+                          <div className="flex justify-between items-start mb-1">
+                            <p className="font-black uppercase text-sm text-white/90 leading-tight flex-1">{item.nome}</p>
+                            <p className="font-mono text-xs text-white/30 ml-4">{item.quantidade.toFixed(3)}x</p>
+                          </div>
+                          <div className="flex justify-between items-center">
+                            <p className="text-sm font-bold text-white/40 italic">R$ {item.preco.toFixed(2)}/un</p>
+                            <p className="text-lg font-black text-luxury-orange">R$ {(item.preco * item.quantidade).toFixed(2)}</p>
+                          </div>
+
+                          {/* Quick Actions overlay when focused */}
+                          {isFocused && !isDeleting && (
+                            <div className="absolute inset-0 bg-luxury-dark-gray/90 backdrop-blur-sm flex items-center justify-center gap-2 px-4">
+                              <button 
+                                onClick={() => {
+                                  editingItemPrecoRef.current = Number(item.preco);
+                                  setEditingItemId(item.id);
+                                  setQuantityInput(item.quantidade.toFixed(3));
+                                  setEditingTotalInput(formatCurrency(Number(item.preco) * Number(item.quantidade)));
+                                  setFocusedCartAction(null);
+                                }}
+                                className={`flex-1 h-10 rounded-xl flex items-center justify-center gap-2 font-black uppercase text-[10px] transition-all ${
+                                  focusedCartAction === 'edit' ? 'bg-luxury-orange text-white' : 'bg-white/10 text-white/40'
+                                }`}
+                              >
+                                <Calculator size={14} /> Editar
+                              </button>
+                              <button 
+                                onClick={() => setConfirmDeleteIdx(idx)}
+                                className={`flex-1 h-10 rounded-xl flex items-center justify-center gap-2 font-black uppercase text-[10px] transition-all ${
+                                  focusedCartAction === 'delete' ? 'bg-red-600 text-white' : 'bg-white/10 text-white/40'
+                                }`}
+                              >
+                                <Trash2 size={14} /> Remover
+                              </button>
+                            </div>
+                          )}
+
+                          {/* Confirm Delete overlay */}
+                          {isDeleting && (
+                            <div className="absolute inset-0 bg-red-600 flex items-center justify-center gap-4 px-4 animate-in fade-in zoom-in duration-200">
+                              <p className="font-black uppercase text-white text-xs italic">Remover item?</p>
+                              <div className="flex gap-2">
+                                <button 
+                                  onClick={() => {
+                                    setCart(prev => prev.filter((_, i) => i !== idx));
+                                    setConfirmDeleteIdx(null);
+                                    setTimeout(() => productFocusTrapRef.current?.focus(), 0);
+                                  }}
+                                  className="h-8 px-4 bg-white text-red-600 rounded-lg font-black uppercase text-[10px]"
+                                >
+                                  SIM [ENTER]
+                                </button>
+                                <button 
+                                  onClick={() => setConfirmDeleteIdx(null)}
+                                  className="h-8 px-4 bg-black/20 text-white rounded-lg font-black uppercase text-[10px]"
+                                >
+                                  NÃO [ESC]
+                                </button>
+                              </div>
+                            </div>
+                          )}
+                        </div>
                       </div>
-                    )}
-                  </div>
-                ))
+                    );
+                  })}
+                </div>
               )}
             </div>
 
+            <div className="p-6 bg-white/5 border-t border-white/10">
+              <div className="flex justify-between items-end mb-4">
+                <p className="text-xs font-black uppercase tracking-widest text-white/30">Total a Pagar</p>
+                <p className="text-4xl font-black text-luxury-orange leading-none">R$ {total.toFixed(2)}</p>
+              </div>
+              <button 
+                disabled={cart.length === 0}
+                onClick={() => setStage('checkout')}
+                className="w-full h-14 bg-luxury-orange hover:bg-luxury-orange-light disabled:opacity-20 disabled:cursor-not-allowed text-black font-black uppercase tracking-widest flex items-center justify-center gap-3 transition-all rounded-2xl shadow-[0_0_30px_rgba(255,102,0,0.2)] active:scale-[0.98]"
+              >
+                <Banknote size={24} />
+                Finalizar Venda [F1]
+              </button>
+            </div>
           </div>
         </div>
 
-        {/* Quantity Modal */}
-        {showQuantityModal && selectedProduct && createPortal(
-          <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-black/80 backdrop-blur-sm"
-            onClick={e => { if (e.target === e.currentTarget) { setShowQuantityModal(false); setSelectedProduct(null); } }}>
-            <div className="glass-card w-full max-w-sm p-8">
-              <h3 className="text-2xl font-black mb-2 text-luxury-orange uppercase">{selectedProduct.nome}</h3>
-              <p className="text-white/40 text-sm mb-6">R$ {selectedProduct.preco_venda.toFixed(2)}/un</p>
+        {/* MODAL QUANTIDADE / EDIÇÃO */}
+        {showQuantityModal && createPortal(
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-black/90 backdrop-blur-md">
+            <div className="glass-card w-full max-w-md p-8 border-luxury-orange/40 relative overflow-hidden">
+              {/* Header decorativo */}
+              <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-transparent via-luxury-orange to-transparent opacity-50"></div>
+              
+              <div className="flex justify-between items-start mb-6">
+                <div>
+                  <h3 className="text-2xl font-black italic text-luxury-orange uppercase leading-tight mb-1">
+                    {editingItemId !== null ? 'Alterar Quantidade' : 'Quantidade'}
+                  </h3>
+                  <p className="text-white/60 font-bold uppercase tracking-tighter text-sm">
+                    {selectedProduct?.nome || cart.find(i => i.id === editingItemId)?.nome}
+                  </p>
+                </div>
+                <div className="p-3 bg-luxury-orange/10 rounded-xl text-luxury-orange">
+                  <Calculator size={24} />
+                </div>
+              </div>
 
-              <label className="text-xs uppercase text-white/40 font-bold block mb-2">Quantidade (máx 99999)</label>
-              <input
-                type="text"
-                value={quantityInput}
-                onChange={e => {
-                  let val = e.target.value.replace(',', '.');
-                  if (!/^\d*\.?\d*$/.test(val)) return;
-                  const parts = val.split('.');
-                  if (parts[0].length > 5) return; // 99999
-                  if (parts[1] && parts[1].length > 3) return;
-                  setQuantityInput(val);
-                }}
-                onKeyDown={e => {
-                  handleQuantityKeyDown(e);
-                  if (e.key === 'Enter') handleAddToCart();
-                }}
-                ref={modalQuantityRef}
-                className="luxury-input w-full h-12 text-center text-2xl font-bold mb-6"
-              />
+              <div className="bg-white/5 rounded-2xl p-6 mb-6 border border-white/10">
+                <p className="text-xs font-black text-white/30 uppercase tracking-widest mb-2 text-center">Quantidade</p>
+                <div className="flex items-center gap-4">
+                  <button 
+                    onClick={() => {
+                      const val = Math.max(0, parseFloat(quantityInput) - 1);
+                      setQuantityInput(val.toFixed(3));
+                    }}
+                    className="w-12 h-12 flex items-center justify-center rounded-xl bg-white/5 text-white/40 hover:bg-white/10 hover:text-white transition-all"
+                  >
+                    <Minus size={20} />
+                  </button>
+                  
+                  <input
+                    ref={modalQuantityRef}
+                    autoFocus
+                    type="text"
+                    className="bg-transparent text-5xl font-mono font-black text-white text-center flex-1 outline-none"
+                    value={quantityInput}
+                    onKeyDown={handleQuantityKeyDown}
+                    onChange={() => {}}
+                    onFocus={e => e.target.select()}
+                  />
 
-              <div className="space-y-2">
+                  <button 
+                    onClick={() => {
+                      const val = parseFloat(quantityInput) + 1;
+                      setQuantityInput(val.toFixed(3));
+                    }}
+                    className="w-12 h-12 flex items-center justify-center rounded-xl bg-white/5 text-white/40 hover:bg-white/10 hover:text-white transition-all"
+                  >
+                    <Plus size={20} />
+                  </button>
+                </div>
+              </div>
+
+              <div className="flex flex-col gap-3">
                 <button
                   ref={addBtnRef}
-                  onClick={handleAddToCart}
-                  onKeyDown={e => {
-                    if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
-                      e.preventDefault();
-                      modalQuantityRef.current?.focus();
-                    } else if (e.key === 'Escape') {
-                      setShowQuantityModal(false);
-                      setQuantityInput("1.000");
-                      setSelectedProduct(null);
-                      setTimeout(() => searchInputRef.current?.focus(), 0);
-                    }
-                  }}
-                  className="btn-primary w-full h-10 uppercase text-sm"
+                  onClick={addToCart}
+                  className="btn-primary w-full h-14 uppercase font-black tracking-widest text-sm shadow-xl shadow-luxury-orange/20"
                 >
                   Adicionar (ENTER)
                 </button>
@@ -1256,7 +1032,7 @@ export default function PDV() {
                 { id: 'credito'  as CheckoutOption, label: 'Crédito',  sub: 'Cartão de crédito',        icon: CreditCard },
                 { id: 'debito'   as CheckoutOption, label: 'Débito',   sub: 'Cartão de débito',         icon: Smartphone },
               ] as const).map(m => (
-                <button key={m.id} onClick={() => initiateFinalize(m.id, m.label)} className={coBtn(m.id)}>
+                <button key={m.id} onClick={() => handleFinalize(m.id)} className={coBtn(m.id)}>
                   <div className={`w-10 h-10 rounded-lg flex items-center justify-center shrink-0 ${coSel(m.id) ? 'bg-white/20' : 'bg-luxury-orange/10'}`}>
                     <m.icon size={20} className={coSel(m.id) ? 'text-white' : 'text-luxury-orange'} />
                   </div>
@@ -1347,48 +1123,6 @@ export default function PDV() {
                 className="btn-primary flex-1 h-12 disabled:opacity-40 disabled:cursor-not-allowed"
               >
                 Confirmar
-              </button>
-            </div>
-          </div>
-        </div>,
-        document.body
-      )}
-
-      {/* Modal Confirmação Finalização */}
-      {showConfirmFinalize && createPortal(
-        <div className="fixed inset-0 z-[300] flex items-center justify-center p-6 bg-black/90 backdrop-blur-md"
-          onClick={e => { if (e.target === e.currentTarget) setShowConfirmFinalize(null); }}>
-          <div className="glass-card w-full max-w-sm p-8 border-luxury-orange/50 text-center relative overflow-hidden">
-            <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-transparent via-luxury-orange to-transparent"></div>
-            
-            <div className="inline-flex p-4 rounded-full bg-luxury-orange/10 text-luxury-orange mb-6">
-              <Banknote size={48} className="animate-pulse" />
-            </div>
-
-            <h3 className="text-3xl font-black italic text-white uppercase mb-2">Confirmar Venda</h3>
-            <p className="text-white/60 mb-6 font-bold tracking-tight">
-              Deseja finalizar a venda no <span className="text-luxury-orange">{showConfirmFinalize.label.toUpperCase()}</span>?
-            </p>
-
-            <div className="bg-white/5 rounded-2xl p-6 mb-8 border border-white/5">
-              <p className="text-xs text-white/30 uppercase font-black tracking-widest mb-1">Total a Receber</p>
-              <p className="text-4xl font-black text-luxury-orange">R$ {total.toFixed(2)}</p>
-            </div>
-
-            <div className="grid grid-cols-2 gap-3">
-              <button
-                onClick={() => setShowConfirmFinalize(null)}
-                className="px-6 py-4 rounded-xl bg-white/5 text-white/40 hover:bg-white/10 hover:text-white font-black uppercase tracking-widest text-xs transition-all"
-              >
-                Voltar (ESC)
-              </button>
-              <button
-                ref={finalizeConfirmRef}
-                autoFocus
-                onClick={() => { handleFinalize(showConfirmFinalize.metodo); setShowConfirmFinalize(null); }}
-                className="px-6 py-4 rounded-xl bg-luxury-orange text-black hover:bg-luxury-orange-light font-black uppercase tracking-widest text-xs transition-all shadow-[0_0_20px_rgba(255,102,0,0.3)] active:scale-95"
-              >
-                Confirmar (ENTER)
               </button>
             </div>
           </div>
