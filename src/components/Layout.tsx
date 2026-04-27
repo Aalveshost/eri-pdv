@@ -8,7 +8,10 @@ import {
   Settings,
   LogOut,
   Clock,
-  History
+  History,
+  Eye,
+  EyeOff,
+  Lock
 } from "lucide-react";
 import { useDatabase } from "../hooks/useDatabase";
 import { setPdvShouldFocusOnMount, pdvNavigateAwayInterceptor, pdvModalOpen } from "../pages/PDV";
@@ -20,14 +23,58 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const { db } = useDatabase();
   const [nomeLoja, setNomeLoja] = useState("Salgados Pro");
   const [isSidebarFocused, setIsSidebarFocused] = useState(false);
+  const [isUnlocked, setIsUnlocked] = useState(false);
+  const [showPasswordModal, setShowPasswordModal] = useState(false);
+  const [passwordInput, setPasswordInput] = useState("");
+  const [pendingPath, setPendingPath] = useState<string | null>(null);
+  const [correctPassword, setCorrectPassword] = useState("1234");
+  const [showPassword, setShowPassword] = useState(false);
+  const [passwordError, setPasswordError] = useState(false);
+  const MASTER_PASSWORD = "1973";
 
 
   useEffect(() => {
     if (!db) return;
-    db.select("SELECT nome_loja FROM configuracoes WHERE id = 1")
-      .then((res: unknown) => { const rows = res as any[]; if (rows.length > 0) setNomeLoja(rows[0].nome_loja || "Salgados Pro"); })
+    db.select("SELECT nome_loja, senha FROM configuracoes WHERE id = 1")
+      .then((res: unknown) => { 
+        const rows = res as any[]; 
+        if (rows.length > 0) {
+          setNomeLoja(rows[0].nome_loja || "Salgados Pro"); 
+          setCorrectPassword(rows[0].senha || "1234");
+        }
+      })
       .catch(() => {});
-  }, [db, location.pathname]); // re-read on every page change so it updates after saving
+  }, [db, location.pathname, showPasswordModal]); 
+
+  useEffect(() => {
+    if (location.pathname === "/") {
+      setIsUnlocked(false);
+    }
+  }, [location.pathname]);
+
+  const handleProtectedNavigation = (path: string) => {
+    if (path === "/" || isUnlocked) {
+      navigate(path);
+      return;
+    }
+    setPendingPath(path);
+    setShowPasswordModal(true);
+    setPasswordInput("");
+    setPasswordError(false);
+  };
+
+  const verifyPassword = () => {
+    if (passwordInput === correctPassword || passwordInput === MASTER_PASSWORD) {
+      setIsUnlocked(true);
+      setShowPasswordModal(false);
+      if (pendingPath) navigate(pendingPath);
+      setPendingPath(null);
+    } else {
+      setPasswordError(true);
+      setPasswordInput("");
+      // Shake effect or feedback
+    }
+  };
 
   const menuItems = [
     { icon: ShoppingCart, label: "VENDA", path: "/" },
@@ -83,8 +130,8 @@ export default function Layout({ children }: { children: React.ReactNode }) {
           e.preventDefault();
           if (idx >= 0 && idx < links.length - 1) {
             const nextPath = menuItems[idx + 1].path;
-            if (location.pathname === '/pdv' && pdvNavigateAwayInterceptor?.()) return;
-            navigate(nextPath);
+            if (location.pathname === '/' && pdvNavigateAwayInterceptor?.()) return;
+            handleProtectedNavigation(nextPath);
             setTimeout(() => (document.querySelectorAll('aside nav a')[idx + 1] as HTMLElement)?.focus(), 0);
           }
         }
@@ -93,8 +140,8 @@ export default function Layout({ children }: { children: React.ReactNode }) {
           e.preventDefault();
           if (idx > 0) {
             const prevPath = menuItems[idx - 1].path;
-            if (location.pathname === '/pdv' && pdvNavigateAwayInterceptor?.()) return;
-            navigate(prevPath);
+            if (location.pathname === '/' && pdvNavigateAwayInterceptor?.()) return;
+            handleProtectedNavigation(prevPath);
             setTimeout(() => (document.querySelectorAll('aside nav a')[idx - 1] as HTMLElement)?.focus(), 0);
           }
         }
@@ -107,9 +154,9 @@ export default function Layout({ children }: { children: React.ReactNode }) {
           
           if (href === '/') {
             setPdvShouldFocusOnMount(true);
+            navigate("/");
             setTimeout(() => {
               const main = document.querySelector('main');
-              // Try to focus date input or search input
               const dateInput = main?.querySelector('input[type="text"]') as HTMLElement;
               const preferred = main?.querySelector('[data-autofocus]') as HTMLElement;
               const firstFocusable = main?.querySelector('input, button, select, [tabindex]:not([tabindex="-1"])') as HTMLElement;
@@ -123,15 +170,8 @@ export default function Layout({ children }: { children: React.ReactNode }) {
               else if (preferred) preferred.focus();
               else if (firstFocusable) firstFocusable.focus();
             }, 50);
-          } else if (href === '/lotes') {
-            setTimeout(() => {
-              const card = document.getElementById('card-0');
-              if (card) card.focus();
-              else {
-                const dateInput = document.getElementById('date-input');
-                if (dateInput) dateInput.focus();
-              }
-            }, 50);
+          } else if (href) {
+            handleProtectedNavigation(href);
           }
         }
         return;
@@ -182,9 +222,11 @@ export default function Layout({ children }: { children: React.ReactNode }) {
               key={item.path}
               to={item.path}
               onClick={e => {
-                if (location.pathname === '/pdv' && item.path !== '/pdv' && pdvNavigateAwayInterceptor?.()) {
-                  e.preventDefault();
+                e.preventDefault();
+                if (location.pathname === '/' && item.path !== '/' && pdvNavigateAwayInterceptor?.()) {
+                  return;
                 }
+                handleProtectedNavigation(item.path);
               }}
               className={cn(
                 "flex items-center gap-3 px-4 py-3 rounded-xl group focus:outline-none no-underline transition-all duration-200",
@@ -204,11 +246,11 @@ export default function Layout({ children }: { children: React.ReactNode }) {
           ))}
         </nav>
 
-        <div className="mt-auto pt-6 border-t border-white/5">
-          <button className="flex items-center gap-3 px-4 py-3 rounded-xl text-red-400/60 hover:text-red-400 hover:bg-red-400/10 transition-all w-full">
-            <LogOut size={20} />
-            <span className="font-medium">Sair</span>
-          </button>
+        <div className="mt-auto pt-6 border-t border-white/5 opacity-20 pointer-events-none">
+          <div className="flex items-center gap-3 px-4 py-3">
+             <Lock size={16} />
+             <span className="text-xs font-bold uppercase tracking-widest">Sistema Travado</span>
+          </div>
         </div>
       </aside>
 
@@ -221,6 +263,67 @@ export default function Layout({ children }: { children: React.ReactNode }) {
         <div className="relative z-10 w-full h-full">
           {children}
         </div>
+
+        {/* Password Modal */}
+        {showPasswordModal && (
+          <div className="fixed inset-0 z-[400] flex items-center justify-center p-6 bg-black/80 backdrop-blur-md">
+            <div className="glass-card w-full max-w-sm p-8 border-luxury-orange/20 shadow-2xl">
+              <div className="flex flex-col items-center text-center mb-8">
+                <div className="w-16 h-16 bg-luxury-orange/10 rounded-full flex items-center justify-center mb-4 border border-luxury-orange/20">
+                  <Lock className="text-luxury-orange" size={32} />
+                </div>
+                <h3 className="text-2xl font-black italic text-white uppercase tracking-tighter">Acesso Restrito</h3>
+                <p className="text-white/40 text-sm mt-1">Insira a senha para acessar esta área.</p>
+              </div>
+
+              <div className="space-y-4">
+                <div className="relative">
+                  <input
+                    autoFocus
+                    type={showPassword ? "text" : "password"}
+                    className={cn(
+                      "luxury-input w-full h-14 pl-12 pr-12 text-center text-xl font-bold tracking-[0.5em] transition-all",
+                      passwordError ? "border-red-500/50 bg-red-500/5 ring-4 ring-red-500/10" : ""
+                    )}
+                    placeholder="••••"
+                    value={passwordInput}
+                    onChange={e => { setPasswordError(false); setPasswordInput(e.target.value); }}
+                    onKeyDown={e => { if (e.key === 'Enter') verifyPassword(); if (e.key === 'Escape') setShowPasswordModal(false); }}
+                  />
+                  <div className="absolute left-4 top-1/2 -translate-y-1/2 text-white/20">
+                    <Lock size={18} />
+                  </div>
+                  <button 
+                    type="button"
+                    onClick={() => setShowPassword(p => !p)}
+                    className="absolute right-4 top-1/2 -translate-y-1/2 text-white/20 hover:text-white transition-colors"
+                  >
+                    {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                  </button>
+                </div>
+
+                {passwordError && (
+                  <p className="text-red-400 text-xs font-bold text-center uppercase tracking-widest animate-pulse">Senha Incorreta</p>
+                )}
+
+                <div className="flex gap-3 pt-4">
+                  <button
+                    onClick={() => { setShowPasswordModal(false); setPendingPath(null); }}
+                    className="flex-1 h-14 border border-white/10 rounded-xl hover:bg-white/5 uppercase text-xs font-bold tracking-widest transition-all"
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    onClick={verifyPassword}
+                    className="flex-1 h-14 bg-luxury-orange rounded-xl text-white font-black italic uppercase tracking-widest transition-all hover:bg-luxury-orange/80 shadow-lg shadow-luxury-orange/20"
+                  >
+                    Entrar
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
       </main>
     </div>
   );

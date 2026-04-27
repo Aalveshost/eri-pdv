@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Save, Database, Bell, Folder, RefreshCw, Upload } from "lucide-react";
+import { Save, Database, Folder, RefreshCw, Upload, Lock, Eye, EyeOff } from "lucide-react";
 import { useDatabase } from "../hooks/useDatabase";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
@@ -11,8 +11,10 @@ export default function Configuracoes() {
     dias_alerta_validade: 5,
     caminho_backup_externo: "",
     nome_loja: "Salgados Pro",
-    frequencia_backup_dias: 7
+    frequencia_backup_dias: 7,
+    senha: "1234"
   });
+  const [showPassword, setShowPassword] = useState(false);
 
   const loadConfig = async () => {
     if (!db) return;
@@ -23,7 +25,8 @@ export default function Configuracoes() {
           dias_alerta_validade: res[0].dias_alerta_validade,
           caminho_backup_externo: res[0].caminho_backup_externo || "",
           nome_loja: res[0].nome_loja || "Salgados Pro",
-          frequencia_backup_dias: res[0].frequencia_backup_dias || 7
+          frequencia_backup_dias: res[0].frequencia_backup_dias || 7,
+          senha: res[0].senha || "1234"
         });
       }
     } catch (err) {
@@ -42,8 +45,8 @@ export default function Configuracoes() {
 
     try {
       await db.execute(
-        "UPDATE configuracoes SET dias_alerta_validade = $1, caminho_backup_externo = $2, nome_loja = $3, frequencia_backup_dias = $4 WHERE id = 1",
-        [form.dias_alerta_validade, form.caminho_backup_externo, form.nome_loja, form.frequencia_backup_dias]
+        "UPDATE configuracoes SET dias_alerta_validade = $1, caminho_backup_externo = $2, nome_loja = $3, frequencia_backup_dias = $4, senha = $5 WHERE id = 1",
+        [form.dias_alerta_validade, form.caminho_backup_externo, form.nome_loja, form.frequencia_backup_dias, form.senha]
       );
       alert("Configurações salvas com sucesso!");
     } catch (err) {
@@ -107,22 +110,11 @@ export default function Configuracoes() {
       <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
         <div className="glass-card p-8 space-y-8">
           <div className="flex items-center gap-3 border-b border-white/5 pb-4">
-            <Bell className="text-luxury-orange" size={24} />
-            <h3 className="text-xl font-bold uppercase italic tracking-tight">Alertas & Notificações</h3>
+            <Lock className="text-luxury-orange" size={24} />
+            <h3 className="text-xl font-bold uppercase italic tracking-tight">Segurança & Loja</h3>
           </div>
 
-          <div className="space-y-4">
-            <label className="block">
-              <span className="text-xs uppercase tracking-widest text-white/40 font-bold mb-2 block">Dias Antecipados para Alerta de Validade</span>
-              <input 
-                type="number" 
-                className="luxury-input w-full h-12"
-                value={form.dias_alerta_validade}
-                onChange={e => setForm({...form, dias_alerta_validade: parseInt(e.target.value)})}
-              />
-              <span className="text-[10px] text-white/20 mt-1 block italic">O sistema irá destacar em amarelo lotes que vencem neste período.</span>
-            </label>
-
+          <div className="space-y-6">
             <label className="block">
               <span className="text-xs uppercase tracking-widest text-white/40 font-bold mb-2 block">Nome da Loja / Unidade</span>
               <input 
@@ -132,6 +124,31 @@ export default function Configuracoes() {
                 onChange={e => setForm({...form, nome_loja: e.target.value})}
               />
             </label>
+
+            <div className="pt-4 border-t border-white/5">
+              <label className="block">
+                <div className="flex justify-between items-end mb-2">
+                  <span className="text-xs uppercase tracking-widest text-white/40 font-bold block">Senha de Acesso (Outras áreas)</span>
+                  <span className="text-[10px] text-luxury-orange font-bold uppercase tracking-widest">Master: 1973</span>
+                </div>
+                <div className="relative">
+                  <input 
+                    type={showPassword ? "text" : "password"} 
+                    className="luxury-input w-full h-12 pr-12 font-mono text-xl tracking-[0.3em]"
+                    value={form.senha}
+                    onChange={e => setForm({...form, senha: e.target.value.slice(0, 8)})}
+                  />
+                  <button 
+                    type="button"
+                    onClick={() => setShowPassword(p => !p)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 p-2 text-white/20 hover:text-white transition-colors"
+                  >
+                    {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                  </button>
+                </div>
+                <span className="text-[10px] text-white/20 mt-2 block italic">Esta senha será pedida sempre que sair da tela de Venda.</span>
+              </label>
+            </div>
           </div>
         </div>
 

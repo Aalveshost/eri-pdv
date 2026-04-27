@@ -9,10 +9,11 @@ CREATE TABLE IF NOT EXISTS configuracoes (
     caminho_backup_externo TEXT,
     ultimo_backup_realizado DATETIME,
     nome_loja TEXT DEFAULT 'Salgados Pro',
-    frequencia_backup_dias INTEGER DEFAULT 7
+    frequencia_backup_dias INTEGER DEFAULT 7,
+    senha TEXT DEFAULT '1234'
 );
 
-INSERT OR IGNORE INTO configuracoes (id, dias_alerta_validade, nome_loja) VALUES (1, 5, 'Salgados Pro');
+INSERT OR IGNORE INTO configuracoes (id, dias_alerta_validade, nome_loja, senha) VALUES (1, 5, 'Salgados Pro', '1234');
 
 CREATE TABLE IF NOT EXISTS produtos (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -136,6 +137,7 @@ export function useDatabase() {
         try { await _db.execute("ALTER TABLE contas_arquivadas ADD COLUMN codigo_arquivamento TEXT"); } catch (e) { /* ignore if exists */ }
         try { await _db.execute("ALTER TABLE lotes ADD COLUMN qtd_vendida INTEGER DEFAULT 0"); } catch (e) { /* ignore if exists */ }
         try { await _db.execute("ALTER TABLE lotes ADD COLUMN produto_avulso_nome TEXT"); } catch (e) { /* ignore if exists */ }
+        try { await _db.execute("ALTER TABLE configuracoes ADD COLUMN senha TEXT DEFAULT '1234'"); } catch (e) { /* ignore if exists */ }
         
         setDb(_db);
       } catch (err) {
