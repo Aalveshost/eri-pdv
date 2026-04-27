@@ -71,8 +71,10 @@ function isValidBrDate(br: string): boolean {
 
 const METODO_LABEL: Record<string, { label: string; color: string }> = {
   dinheiro:  { label: 'Dinheiro', color: 'text-green-400' },
-  pix:       { label: 'PIX',      color: 'text-blue-400' },
+  pix:       { label: 'Pix',      color: 'text-blue-400' },
   cartao:    { label: 'Cartão',   color: 'text-purple-400' },
+  credito:   { label: 'Credito',  color: 'text-purple-400' },
+  debito:    { label: 'Debito',   color: 'text-purple-400' },
   prazo:     { label: 'A Prazo',  color: 'text-luxury-orange' },
 };
 
@@ -422,9 +424,9 @@ export default function Historico() {
   }, [navZone, inputActive, focusedRow, activeTab, vendas, vendasPrazo, load]);
 
   // Totais
-  const totalDinheiro = vendas.filter(v => v.metodo_pagamento === 'dinheiro').reduce((a,v) => a+v.total_venda, 0);
-  const totalPix      = vendas.filter(v => v.metodo_pagamento === 'pix').reduce((a,v) => a+v.total_venda, 0);
-  const totalCartao   = vendas.filter(v => v.metodo_pagamento === 'cartao').reduce((a,v) => a+v.total_venda, 0);
+  const totalDinheiro = vendas.filter(v => v.metodo_pagamento.toLowerCase() === 'dinheiro').reduce((a,v) => a+v.total_venda, 0);
+  const totalPix      = vendas.filter(v => v.metodo_pagamento.toLowerCase() === 'pix').reduce((a,v) => a+v.total_venda, 0);
+  const totalCartao   = vendas.filter(v => ['cartao', 'credito', 'debito'].includes(v.metodo_pagamento.toLowerCase())).reduce((a,v) => a+v.total_venda, 0);
   const totalPrazo    = vendasPrazo.reduce((a,v) => a+v.total, 0);
   const totalGeral    = totalDinheiro + totalPix + totalCartao + totalPrazo;
 
@@ -514,7 +516,11 @@ export default function Historico() {
               <tr><td colSpan={4} className="px-4 py-8 text-center text-white/30 text-sm">Nenhuma venda no período</td></tr>
             )}
             {activeTab === 'todas' && vendas.map((v, i) => {
-              const meta = METODO_LABEL[v.metodo_pagamento] || { label: v.metodo_pagamento, color: 'text-white' };
+              const metodoLower = v.metodo_pagamento.toLowerCase();
+              const meta = METODO_LABEL[metodoLower] || { 
+                label: v.metodo_pagamento.charAt(0).toUpperCase() + v.metodo_pagamento.slice(1).toLowerCase(), 
+                color: 'text-white' 
+              };
               const focused = navZone === 'lista-vendas' && focusedRow === i;
               const expanded = expandedVendas.has(v.id);
               return (
