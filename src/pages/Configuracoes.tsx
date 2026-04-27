@@ -3,6 +3,7 @@ import { Save, Database, Folder, RefreshCw, Upload, Lock, Eye, EyeOff } from "lu
 import { useDatabase } from "../hooks/useDatabase";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
+import { cn } from "../utils/cn";
 
 export default function Configuracoes() {
   const { db } = useDatabase();
@@ -14,6 +15,7 @@ export default function Configuracoes() {
     senha: "1234"
   });
   const [showPassword, setShowPassword] = useState(false);
+  const [isEditingPassword, setIsEditingPassword] = useState(false);
 
   const fNomeRef = useRef<HTMLInputElement>(null);
   const fSenhaRef = useRef<HTMLInputElement>(null);
@@ -25,12 +27,12 @@ export default function Configuracoes() {
 
   const navMap: Record<string, { up?: React.RefObject<any>; down?: React.RefObject<any>; left?: React.RefObject<any>; right?: React.RefObject<any> }> = {
     nome: { down: fSenhaRef, right: fCaminhoRef },
-    senha: { up: fNomeRef, right: fFreqRef, down: fSalvarBtnRef },
+    senha: { up: fNomeRef, right: fFreqRef, down: form.caminho_backup_externo ? fBackupBtnRef : fImportBtnRef },
     caminho: { left: fNomeRef, down: fFreqRef },
-    freq: { up: fCaminhoRef, left: fSenhaRef, down: fBackupBtnRef, right: fBackupBtnRef },
+    freq: { up: fCaminhoRef, left: fSenhaRef, down: form.caminho_backup_externo ? fBackupBtnRef : fImportBtnRef, right: fBackupBtnRef },
     backup: { up: fFreqRef, left: fSenhaRef, down: fImportBtnRef },
-    import: { up: fBackupBtnRef, left: fSenhaRef, down: fSalvarBtnRef },
-    salvar: { up: fImportBtnRef, left: fSenhaRef }
+    import: { up: form.caminho_backup_externo ? fBackupBtnRef : fFreqRef, left: fSenhaRef, down: fSalvarBtnRef },
+    salvar: { up: fSenhaRef, left: fImportBtnRef }
   };
 
   const handleNav = (e: React.KeyboardEvent, field: string) => {
@@ -181,15 +183,37 @@ export default function Configuracoes() {
               <label className="block">
                 <div className="flex justify-between items-end mb-2">
                   <span className="text-xs uppercase tracking-widest text-white/40 font-bold block">Senha de Acesso (Outras áreas)</span>
+                  {isEditingPassword && <span className="text-[10px] text-luxury-orange font-bold animate-pulse">EDITANDO...</span>}
                 </div>
                 <div className="relative">
                   <input 
                     ref={fSenhaRef}
-                    type={showPassword ? "text" : "password"} 
-                    className="luxury-input w-full h-12 pr-12 font-mono text-xl tracking-[0.3em]"
+                    type={(showPassword || isEditingPassword) ? "text" : "password"} 
+                    className={cn(
+                      "luxury-input w-full h-12 pr-12 font-mono text-xl tracking-[0.3em] transition-all",
+                      isEditingPassword ? "border-luxury-orange ring-1 ring-luxury-orange/20" : "opacity-80"
+                    )}
+                    readOnly={!isEditingPassword}
                     value={form.senha}
                     onChange={e => setForm({...form, senha: e.target.value.slice(0, 8)})}
-                    onKeyDown={e => handleNav(e, 'senha')}
+                    onBlur={() => { setIsEditingPassword(false); setShowPassword(false); }}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter') {
+                        if (!isEditingPassword) {
+                          e.preventDefault();
+                          setIsEditingPassword(true);
+                          setShowPassword(true);
+                        } else {
+                          setIsEditingPassword(false);
+                          setShowPassword(false);
+                          // After finishing edit, move down or stay? Let's stay but lock.
+                        }
+                        return;
+                      }
+                      if (!isEditingPassword) {
+                        handleNav(e, 'senha');
+                      }
+                    }}
                   />
                   <button 
                     type="button"
