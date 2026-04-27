@@ -462,10 +462,10 @@ export default function Historico() {
       <h1 className="text-3xl font-black italic text-luxury-orange uppercase">Histórico de Vendas</h1>
 
       {/* Filtro + Resumo */}
-      <div className="glass-card px-4 py-3 flex flex-col lg:flex-row gap-6 items-center">
+      <div className="glass-card px-4 py-3 flex flex-row gap-6 items-end">
         {/* Datas */}
-        <div className="flex gap-4 shrink-0">
-          <div className="w-40">
+        <div className="flex gap-3 shrink-0">
+          <div className="w-36">
             <DateInput
               label="Data Inicial" value={dataInicial} onChange={setDataInicial}
               highlighted={navZone === 'ini' && !inputActive}
@@ -473,7 +473,7 @@ export default function Historico() {
               externalRef={iniRef}
             />
           </div>
-          <div className="w-40">
+          <div className="w-36">
             <DateInput
               label="Data Final" value={dataFinal} onChange={setDataFinal}
               highlighted={navZone === 'fim' && !inputActive}
@@ -483,18 +483,18 @@ export default function Historico() {
           </div>
         </div>
 
-        {/* Resumo em Grid */}
-        <div className="flex-1 grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-x-8 gap-y-3 w-full lg:w-auto">
+        {/* Resumo em Linha Única */}
+        <div className="flex flex-1 gap-x-5 justify-end flex-nowrap min-w-0">
           {[
             { label: 'Dinheiro', value: totalDinheiro, color: 'text-green-400' },
             { label: 'PIX',      value: totalPix,      color: 'text-blue-400' },
             { label: 'Cartão',   value: totalCartao,   color: 'text-purple-400' },
             { label: 'A Prazo',  value: totalPrazo,    color: 'text-luxury-orange' },
             { label: 'TOTAL',    value: totalGeral,    color: 'text-white' },
-          ].map((t, idx, arr) => (
-            <div key={t.label} className="text-left min-w-[100px]">
+          ].map((t) => (
+            <div key={t.label} className="text-left shrink-0">
               <p className="text-[10px] text-white/30 uppercase font-bold leading-tight">{t.label}</p>
-              <p className={`text-base font-black ${t.color} leading-tight`}>R$ {formatCurrency(t.value)}</p>
+              <p className={`text-base font-black ${t.color} leading-tight whitespace-nowrap`}>R$ {formatCurrency(t.value)}</p>
             </div>
           ))}
         </div>
