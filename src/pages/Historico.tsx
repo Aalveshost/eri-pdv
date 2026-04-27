@@ -234,32 +234,50 @@ export default function Historico() {
   }, [focusedRow, navZone]);
 
   const toggleVenda = async (id: number) => {
-    let wasOpen = false;
+    const isNowExpanded = !expandedVendas.has(id);
+    
     setExpandedVendas(prev => {
       const next = new Set(prev);
-      if (next.has(id)) { next.delete(id); wasOpen = true; } else { next.add(id); }
+      if (next.has(id)) next.delete(id); else next.add(id);
       return next;
     });
-    if (!wasOpen && !vendaItems[id]) {
-      const itens: any[] = await db!.select(
-        `SELECT vi.id, vi.produto_id, vi.quantidade, vi.preco_unitario, p.nome as produto_nome
-         FROM venda_itens vi JOIN produtos p ON p.id = vi.produto_id
-         WHERE vi.venda_id = $1`, [id]
-      );
-      setVendaItems(prev => ({...prev, [id]: itens}));
+
+    if (isNowExpanded && !vendaItems[id]) {
+      try {
+        const itens: any[] = await db!.select(
+          `SELECT vi.id, vi.produto_id, vi.quantidade, vi.preco_unitario, p.nome as produto_nome
+           FROM venda_itens vi 
+           LEFT JOIN produtos p ON p.id = vi.produto_id
+           WHERE vi.venda_id = $1`, [id]
+        );
+        // Fallback for product name if product was deleted
+        const processed = itens.map(i => ({
+          ...i,
+          produto_nome: i.produto_nome || `Produto #${i.produto_id} (Removido)`
+        }));
+        setVendaItems(prev => ({...prev, [id]: processed}));
+      } catch (err) {
+        console.error("Erro ao buscar itens da venda:", err);
+      }
     }
   };
 
   const togglePrazo = async (id: number) => {
-    let wasOpen = false;
+    const isNowExpanded = !expandedPrazo.has(id);
+
     setExpandedPrazo(prev => {
       const next = new Set(prev);
-      if (next.has(id)) { next.delete(id); wasOpen = true; } else { next.add(id); }
+      if (next.has(id)) next.delete(id); else next.add(id);
       return next;
     });
-    if (!wasOpen && !vendaPrazoItems[id]) {
-      const itens: VendaPrazoItem[] = await db!.select("SELECT * FROM vendas_prazo_itens WHERE venda_id=$1", [id]);
-      setVendaPrazoItems(prev => ({...prev, [id]: itens}));
+
+    if (isNowExpanded && !vendaPrazoItems[id]) {
+      try {
+        const itens: VendaPrazoItem[] = await db!.select("SELECT * FROM vendas_prazo_itens WHERE venda_id=$1", [id]);
+        setVendaPrazoItems(prev => ({...prev, [id]: itens}));
+      } catch (err) {
+        console.error("Erro ao buscar itens a prazo:", err);
+      }
     }
   };
 
@@ -515,16 +533,27 @@ export default function Historico() {
                       <div className={`px-4 py-3 font-bold text-sm flex-1 ${meta.color}`}>{meta.label}</div>
                       <div className="px-4 py-3 text-right font-black text-white w-32 shrink-0">R$ {v.total_venda.toFixed(2)}</div>
                     </div>
-                    {expanded && vendaItems[v.id] && (
-                      <div className="bg-black/20 border-b border-white/5">
-                        {vendaItems[v.id].map(item => (
-                          <div key={item.id} className="flex items-center gap-3 px-12 py-2 border-t border-white/5 text-sm">
-                            <span className="flex-1 text-white/70">{item.produto_nome}</span>
-                            <span className="text-white/40 w-12 text-right">{item.quantidade}x</span>
-                            <span className="text-white/60 w-20 text-right font-mono">R$ {item.preco_unitario.toFixed(2)}</span>
-                            <span className="text-white w-24 text-right font-black font-mono">R$ {(item.quantidade * item.preco_unitario).toFixed(2)}</span>
-                          </div>
-                        ))}
+                    {expanded && (
+                      <div className="bg-black/40 border-b border-white/5 overflow-hidden">
+                        {!vendaItems[v.id] ? (
+                          <div className="px-12 py-3 text-xs text-white/30 animate-pulse uppercase font-bold tracking-widest">Carregando itens...</div>
+                        ) : vendaItems[v.id].length === 0 ? (
+                          <div className="px-12 py-3 text-xs text-red-400/50 uppercase font-bold tracking-widest">Nenhum detalhe encontrado para esta venda.</div>
+                        ) : (
+                          vendaItems[v.id].map(item => (
+                            <div key={item.id} className="flex items-center gap-3 px-12 py-2 border-t border-white/5 text-sm hover:bg-white/5 transition-colors">
+                              <span className="flex-1 text-white/70 font-medium">{item.produto_nome}</span>
+                              <div className="flex items-center gap-4 text-right">
+                                <span className="text-white/30 text-xs w-16">
+                                  {item.quantidade} x R$ {item.preco_unitario.toFixed(2)}
+                                </span>
+                                <span className="text-white w-24 text-right font-black font-mono">
+                                  R$ {(item.quantidade * item.preco_unitario).toFixed(2)}
+                                </span>
+                              </div>
+                            </div>
+                          ))
+                        )}
                       </div>
                     )}
                   </td>
@@ -553,15 +582,27 @@ export default function Historico() {
                       <div className="px-4 py-3 font-semibold text-luxury-orange flex-1">{v.cliente_nome}</div>
                       <div className="px-4 py-3 text-right font-black text-white w-32 shrink-0">R$ {v.total.toFixed(2)}</div>
                     </div>
-                    {expanded && vendaPrazoItems[v.id] && (
-                      <div className="bg-black/20 border-b border-white/5">
-                        {vendaPrazoItems[v.id].map(item => (
-                          <div key={item.id} className="flex items-center gap-3 px-12 py-2 border-t border-white/5 text-sm">
-                            <span className="flex-1 text-white/70">{item.produto_nome}</span>
-                            <span className="text-white/40 w-12 text-right">{item.quantidade}x</span>
-                            <span className="text-white w-24 text-right font-black font-mono">R$ {item.valor_total.toFixed(2)}</span>
-                          </div>
-                        ))}
+                    {expanded && (
+                      <div className="bg-black/40 border-b border-white/5 overflow-hidden">
+                        {!vendaPrazoItems[v.id] ? (
+                          <div className="px-12 py-3 text-xs text-white/30 animate-pulse uppercase font-bold tracking-widest">Carregando itens...</div>
+                        ) : vendaPrazoItems[v.id].length === 0 ? (
+                          <div className="px-12 py-3 text-xs text-red-400/50 uppercase font-bold tracking-widest">Nenhum detalhe encontrado.</div>
+                        ) : (
+                          vendaPrazoItems[v.id].map(item => (
+                            <div key={item.id} className="flex items-center gap-3 px-12 py-2 border-t border-white/5 text-sm hover:bg-white/5 transition-colors">
+                              <span className="flex-1 text-white/70 font-medium">{item.produto_nome}</span>
+                              <div className="flex items-center gap-4 text-right">
+                                <span className="text-white/30 text-xs w-16">
+                                  {item.quantidade} un
+                                </span>
+                                <span className="text-white w-24 text-right font-black font-mono">
+                                  R$ {item.valor_total.toFixed(2)}
+                                </span>
+                              </div>
+                            </div>
+                          ))
+                        )}
                       </div>
                     )}
                   </td>
