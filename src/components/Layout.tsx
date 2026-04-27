@@ -143,6 +143,9 @@ export default function Layout({ children }: { children: React.ReactNode }) {
         if (goNext) {
           e.preventDefault();
           if (idx >= 0 && idx < links.length - 1) {
+            const nextPath = menuItems[idx + 1].path;
+            if (location.pathname === '/' && pdvNavigateAwayInterceptor?.()) return;
+            handleProtectedNavigation(nextPath);
             setTimeout(() => (document.querySelectorAll('aside nav a')[idx + 1] as HTMLElement)?.focus(), 0);
           }
         }
@@ -150,6 +153,9 @@ export default function Layout({ children }: { children: React.ReactNode }) {
         if (goPrev) {
           e.preventDefault();
           if (idx > 0) {
+            const prevPath = menuItems[idx - 1].path;
+            if (location.pathname === '/' && pdvNavigateAwayInterceptor?.()) return;
+            handleProtectedNavigation(prevPath);
             setTimeout(() => (document.querySelectorAll('aside nav a')[idx - 1] as HTMLElement)?.focus(), 0);
           }
         }
@@ -160,6 +166,8 @@ export default function Layout({ children }: { children: React.ReactNode }) {
           const href = activeLink?.getAttribute('href');
           if (location.pathname === '/' && href !== '/' && pdvNavigateAwayInterceptor?.()) return;
           
+          activeLink?.blur();
+
           if (href === '/') {
             setPdvShouldFocusOnMount(true);
             navigate("/");
@@ -245,14 +253,12 @@ export default function Layout({ children }: { children: React.ReactNode }) {
                 handleProtectedNavigation(item.path);
               }}
               className={cn(
-                "flex items-center gap-3 px-4 py-3 rounded-xl group focus:outline-none no-underline transition-all duration-200 border border-transparent",
+                "flex items-center gap-3 px-4 py-3 rounded-xl group focus:outline-none no-underline transition-all duration-200",
                 location.pathname === item.path
                   ? isSidebarFocused && document.activeElement?.getAttribute('href') === item.path
-                    ? "bg-luxury-orange text-white shadow-lg shadow-luxury-orange/20 border-luxury-orange" 
-                    : "border-luxury-orange/30 bg-luxury-orange/5 text-luxury-orange shadow-sm" 
-                  : isSidebarFocused && document.activeElement?.getAttribute('href') === item.path
-                    ? "border-luxury-orange/50 bg-white/5 text-white shadow-sm"
-                    : "text-white/40 hover:bg-white/5 hover:text-white"
+                    ? "bg-luxury-orange text-white shadow-lg shadow-luxury-orange/20" // Img 2: Active + Focused
+                    : "border border-luxury-orange/30 bg-luxury-orange/5 text-luxury-orange shadow-sm" // Img 3: Active + Not Focused
+                  : "text-white/40 hover:bg-white/5 hover:text-white focus:bg-white/10 focus:text-white"
               )}
             >
               <item.icon size={20} className={cn(

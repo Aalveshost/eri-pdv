@@ -82,7 +82,8 @@ export default function Configuracoes() {
   useEffect(() => {
     // Focus and cursor at end for Nome Loja on mount
     setTimeout(() => {
-      if (fNomeRef.current) {
+      const sidebarFocused = document.activeElement?.closest('aside');
+      if (!sidebarFocused && fNomeRef.current) {
         fNomeRef.current.focus();
         const val = fNomeRef.current.value;
         fNomeRef.current.setSelectionRange(val.length, val.length);

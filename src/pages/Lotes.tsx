@@ -191,6 +191,9 @@ export default function ProducaoPage() {
   useEffect(() => {
     if (db && !isModalOpen && !editItem && !isQuickAddMode) {
       setTimeout(() => {
+        const sidebarFocused = document.activeElement?.closest('aside');
+        if (sidebarFocused) return;
+
         const firstRow = document.querySelector('tbody tr[tabindex="0"]') as HTMLElement;
         if (firstRow) firstRow.focus();
         else document.getElementById('btn-registrar')?.focus();
