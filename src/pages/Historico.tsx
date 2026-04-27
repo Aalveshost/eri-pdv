@@ -582,11 +582,11 @@ export default function Historico() {
                           vendaItems[v.id].map(item => (
                             <div key={item.id} className="flex items-center gap-3 px-12 py-2 border-t border-white/5 text-sm hover:bg-white/5 transition-colors">
                               <span className="flex-1 text-white/70 font-medium">
-                                <span className="text-luxury-orange font-black mr-2">{item.quantidade}x</span>
+                                <span className="text-luxury-orange font-bold mr-2">{item.quantidade}x</span>
                                 {item.produto_nome}
                               </span>
                               <div className="flex items-center gap-2 text-right font-mono">
-                                <span className="text-white/30 text-[10px]">
+                                <span className="text-white/50 text-[11px] font-medium">
                                   R$ {formatCurrency(item.preco_unitario)}
                                 </span>
                                 <span className="text-white/10 text-xs">|</span>
@@ -635,11 +635,11 @@ export default function Historico() {
                           vendaPrazoItems[v.id].map(item => (
                             <div key={item.id} className="flex items-center gap-3 px-12 py-2 border-t border-white/5 text-sm hover:bg-white/5 transition-colors">
                               <span className="flex-1 text-white/70 font-medium">
-                                <span className="text-luxury-orange font-black mr-2">{item.quantidade}x</span>
+                                <span className="text-luxury-orange font-bold mr-2">{item.quantidade}x</span>
                                 {item.produto_nome}
                               </span>
                               <div className="flex items-center gap-2 text-right font-mono">
-                                <span className="text-white/30 text-[10px]">
+                                <span className="text-white/50 text-[11px] font-medium">
                                   R$ {formatCurrency(item.valor_total / item.quantidade)}
                                 </span>
                                 <span className="text-white/10 text-xs">|</span>
