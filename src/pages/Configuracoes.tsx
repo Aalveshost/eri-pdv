@@ -129,7 +129,6 @@ export default function Configuracoes() {
               <label className="block">
                 <div className="flex justify-between items-end mb-2">
                   <span className="text-xs uppercase tracking-widest text-white/40 font-bold block">Senha de Acesso (Outras áreas)</span>
-                  <span className="text-[10px] text-luxury-orange font-bold uppercase tracking-widest">Master: 1973</span>
                 </div>
                 <div className="relative">
                   <input 
