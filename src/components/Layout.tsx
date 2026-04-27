@@ -332,6 +332,10 @@ export default function Layout({ children }: { children: React.ReactNode }) {
                       }
                     }}
                     onKeyDown={e => { 
+                      // Allow only digits and control keys
+                      const isDigit = /^\d$/.test(e.key);
+                      const isControl = ['Backspace', 'Tab', 'ArrowLeft', 'ArrowRight', 'Delete'].includes(e.key);
+
                       if (e.key === 'Enter') {
                         e.preventDefault();
                         e.stopPropagation();
@@ -344,9 +348,12 @@ export default function Layout({ children }: { children: React.ReactNode }) {
                             passwordInputRef.current.setSelectionRange(val.length, val.length);
                           }
                         }, 10);
+                        return;
                       }
+
                       if (e.key === 'Escape') {
                         e.preventDefault();
+                        e.stopPropagation();
                         setShowPasswordModal(false);
                         const isConfig = pendingPath === '/config';
                         setPendingPath(null);
@@ -360,6 +367,11 @@ export default function Layout({ children }: { children: React.ReactNode }) {
                             links[0]?.focus(); // VENDA
                           }
                         }, 50);
+                        return;
+                      }
+
+                      if (!isDigit && !isControl) {
+                        e.preventDefault();
                       }
                     }}
                   />
