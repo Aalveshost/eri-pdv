@@ -7,13 +7,10 @@ import { processarVendaFIFO } from "../utils/fifoEngine";
 import { normalizeText } from "../utils/text";
 import { formatCurrency, parseCurrencyToNumber, handleCurrencyInput } from "../utils/currency";
 
-console.log("PDV.tsx loading...");
-
 // Module-level flag: set by Layout when user presses Enter on PDV sidebar link
 // Checked on mount to decide whether to auto-focus the date input
 export let pdvShouldFocusOnMount = false;
 export function setPdvShouldFocusOnMount(val: boolean) { 
-  console.log("setPdvShouldFocusOnMount called with", val);
   pdvShouldFocusOnMount = val; 
 }
 
@@ -145,13 +142,11 @@ export default function PDV() {
   }, [db, search, stage]);
 
   // Barcode integration
-  /*
   useScanner((code) => {
     if (stage === 'selling') {
       setSearch(code);
     }
   });
-  */
 
   const handleProductSelect = (product: any) => {
     setSelectedProduct(product);
