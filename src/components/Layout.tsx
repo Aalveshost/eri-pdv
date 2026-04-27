@@ -60,8 +60,8 @@ export default function Layout({ children }: { children: React.ReactNode }) {
       return;
     }
     
-    // Always ask password for Config, OR ask if system is locked for other protected pages
-    if (path === "/config" || !isUnlocked) {
+    // Always ask password for Config and Dashboard, OR ask if system is locked for other protected pages
+    if (path === "/config" || path === "/dashboard" || !isUnlocked) {
       setPendingPath(path);
       setShowPasswordModal(true);
       setPasswordInput("");
