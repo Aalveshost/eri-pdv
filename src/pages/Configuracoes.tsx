@@ -39,6 +39,7 @@ export default function Configuracoes() {
     if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Enter'].includes(e.key)) {
       if (field === 'senha' && e.key === 'Enter') {
         e.preventDefault();
+        e.stopPropagation();
         setShowPassword(prev => !prev);
         setIsEditingPassword(true);
         setTimeout(() => {
