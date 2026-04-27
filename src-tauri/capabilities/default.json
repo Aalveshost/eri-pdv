@@ -9,6 +9,8 @@
     "core:default",
     "opener:default",
     "sql:default",
+    "sql:allow-load",
+    "sql:allow-query",
     "sql:allow-execute",
     "dialog:default"
   ]
