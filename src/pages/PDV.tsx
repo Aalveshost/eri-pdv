@@ -447,9 +447,6 @@ export default function PDV() {
       setFocusedCartAction(null);
       setTimeout(() => cartFocusTrapRef.current?.focus(), 0);
     };
-      const activeSidebarLink = document.querySelector('aside nav a[class*="bg-luxury-orange"]') as HTMLElement;
-      activeSidebarLink?.focus();
-    };
 
     const handleKeyDown = (e: KeyboardEvent) => {
       if (showQuantityModal || showExitConfirm || showClienteModal || editingItemIdRef.current !== null) {
@@ -606,7 +603,7 @@ export default function PDV() {
 
     window.addEventListener('keydown', handleKeyDown, true);
     return () => window.removeEventListener('keydown', handleKeyDown, true);
-  }, [stage, cart, cart.length, showExitConfirm, products, focusedProductIndex, search, focusedCartIndex, focusedCartAction, confirmDeleteIdx, focusedZone, editingItemId, showQuantityModal, showClienteModal])
+  }, [stage, cart, cart.length, showExitConfirm, products, focusedProductIndex, search, focusedCartIndex, focusedCartAction, confirmDeleteIdx, focusedZone, editingItemId, showQuantityModal, showClienteModal]);
 
   const loadClientes = async () => {
     if (!db) return;
