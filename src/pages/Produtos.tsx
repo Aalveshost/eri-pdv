@@ -227,7 +227,11 @@ export default function Produtos() {
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!db) return;
+    console.log("handleSave: Iniciando...", { db: !!db, form });
+    if (!db) {
+      setFormError("Banco de dados não disponível.");
+      return;
+    }
 
     const cod = form.codigo_barras.trim();
     if (!cod) {
@@ -262,7 +266,7 @@ export default function Produtos() {
           "INSERT INTO produtos (nome, codigo_barras, preco_venda, preco_custo, ativo) VALUES ($1, $2, $3, $4, $5)",
           [normalizedNome, form.codigo_barras || null, pVenda, pCusto, form.ativo]
         );
-      }
+      console.log("handleSave: Sucesso!");
       setIsModalOpen(false);
       setEditingProduto(null);
       setFormError(null);
@@ -270,6 +274,7 @@ export default function Produtos() {
       loadProdutos();
     } catch (err: any) {
       const msg = String(err?.message || err);
+      console.error("handleSave: Erro detectado:", msg);
       if (msg.toLowerCase().includes("unique") || msg.toLowerCase().includes("unique constraint")) {
         setFormError("Este código de barras já pertence a outro produto.");
       } else {
@@ -425,7 +430,6 @@ export default function Produtos() {
       >
         <form 
           onSubmit={handleSave} 
-          onKeyDown={(e) => { if (e.key === 'Enter') handleSave(e); }} 
           className="grid grid-cols-2 gap-6"
         >
           <div className="col-span-2">
