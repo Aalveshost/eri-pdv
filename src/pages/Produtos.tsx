@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
-import { Plus, Search, Edit2, Trash2, X } from "lucide-react";
+import { Plus, Search, Edit2, Trash2 } from "lucide-react";
 import { useDatabase } from "../hooks/useDatabase";
 import Modal from "../components/Modal";
 import { handleCurrencyInput, parseCurrencyToNumber, formatCurrency } from "../utils/currency";

@@ -1,6 +1,5 @@
 import { useState, useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
-import { useNavigate } from "react-router-dom";
 import { CreditCard, Banknote, QrCode, X, Pencil, Trash2, Smartphone, Clock } from "lucide-react";
 import { useDatabase } from "../hooks/useDatabase";
 import { useScanner } from "../hooks/useScanner";
@@ -30,7 +29,6 @@ interface CartItem {
 
 export default function PDV() {
   const { db } = useDatabase();
-  const navigate = useNavigate();
   const getTodayDigits = () => {
     const now = new Date();
     const d = String(now.getDate()).padStart(2, '0');
@@ -449,13 +447,6 @@ export default function PDV() {
       setFocusedCartAction(null);
       setTimeout(() => cartFocusTrapRef.current?.focus(), 0);
     };
-    const exitZone = () => {
-      setFocusedZone(null);
-      setFocusedCartIndex(null);
-      setFocusedCartAction(null);
-      setConfirmDeleteIdx(null);
-      focusedProductIndexRef.current = null;
-      setFocusedProductIndex(null);
       const activeSidebarLink = document.querySelector('aside nav a[class*="bg-luxury-orange"]') as HTMLElement;
       activeSidebarLink?.focus();
     };
@@ -810,7 +801,6 @@ export default function PDV() {
 
   // Stage: Selling
   if (stage === 'selling') {
-    const cartFocused = focusedCartIndex !== null;
 
     return (
       <div className="flex flex-col h-full gap-4 p-4">

@@ -161,13 +161,12 @@ export default function ProducaoPage() {
   const [quickForm, setQuickForm] = useState({ v: "0,00", c: "0,00" });
   const [editItem, setEditItem] = useState<Producao | null>(null);
   const [editForm, setEditForm] = useState({ produzido: "", data: "", hora: "" });
-  const [errors, setErrors] = useState<Record<string, string>>({});
   const lastFocusedRef = useRef<HTMLElement | null>(null);
 
   const filteredSuggestions = produtos.filter(p => normalizeText(p.nome).includes(normalizeText(searchTerm))).slice(0, 3);
 
   const openModal = () => { lastFocusedRef.current = document.activeElement as HTMLElement; setIsModalOpen(true); };
-  const closeModal = () => { setIsModalOpen(false); setIsQuickAddMode(false); setEditItem(null); setSearchTerm(""); setSelectedProd(null); setErrors({}); setTimeout(() => lastFocusedRef.current?.focus(), 50); };
+  const closeModal = () => { setIsModalOpen(false); setIsQuickAddMode(false); setEditItem(null); setSearchTerm(""); setSelectedProd(null); setTimeout(() => lastFocusedRef.current?.focus(), 50); };
 
   const loadData = async () => {
     if (!db) return;
@@ -249,7 +248,7 @@ export default function ProducaoPage() {
     try {
       const v = parseCurrencyToNumber(quickForm.v); const c = parseCurrencyToNumber(quickForm.c);
       const res = await db.execute("INSERT INTO produtos (nome, preco_venda, preco_custo, ativo) VALUES ($1, $2, $3, 1)", [searchTerm.toUpperCase(), v, c]);
-      setSelectedProd({ id: res.lastInsertId, nome: searchTerm.toUpperCase() }); setIsQuickAddMode(false); loadData();
+      setSelectedProd({ id: res.lastInsertId || 0, nome: searchTerm.toUpperCase() }); setIsQuickAddMode(false); loadData();
     } catch (err) { console.error(err); }
   };
 

@@ -1078,7 +1078,7 @@ function TelaConta({ db, cliente, onVoltar, autoFocusItems }: { db: any; cliente
     if (editItem) {
       setEiField('produto');
       setEiBtnFocus(1);
-      setEiInputActive(true);
+      _setEiInputActive(true);
     }
   }, [editItem]);
 
