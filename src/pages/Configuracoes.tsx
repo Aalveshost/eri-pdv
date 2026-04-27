@@ -118,6 +118,7 @@ export default function Configuracoes() {
             <label className="block">
               <span className="text-xs uppercase tracking-widest text-white/40 font-bold mb-2 block">Nome da Loja / Unidade</span>
               <input 
+                autoFocus
                 type="text" 
                 className="luxury-input w-full h-12"
                 value={form.nome_loja}
