@@ -10,7 +10,7 @@
     "opener:default",
     "sql:default",
     "sql:allow-load",
-    "sql:allow-query",
+    "sql:allow-select",
     "sql:allow-execute",
     "dialog:default"
   ]
