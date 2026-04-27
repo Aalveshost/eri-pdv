@@ -462,24 +462,29 @@ export default function Historico() {
       <h1 className="text-3xl font-black italic text-luxury-orange uppercase">Histórico de Vendas</h1>
 
       {/* Filtro + Resumo */}
-      <div className="glass-card px-4 py-3 flex flex-wrap gap-4 items-end">
-        <div className="w-44">
-          <DateInput
-            label="Data Inicial" value={dataInicial} onChange={setDataInicial}
-            highlighted={navZone === 'ini' && !inputActive}
-            inputActive={navZone === 'ini' && inputActive}
-            externalRef={iniRef}
-          />
+      <div className="glass-card px-4 py-3 flex flex-col lg:flex-row gap-6 items-center">
+        {/* Datas */}
+        <div className="flex gap-4 shrink-0">
+          <div className="w-40">
+            <DateInput
+              label="Data Inicial" value={dataInicial} onChange={setDataInicial}
+              highlighted={navZone === 'ini' && !inputActive}
+              inputActive={navZone === 'ini' && inputActive}
+              externalRef={iniRef}
+            />
+          </div>
+          <div className="w-40">
+            <DateInput
+              label="Data Final" value={dataFinal} onChange={setDataFinal}
+              highlighted={navZone === 'fim' && !inputActive}
+              inputActive={navZone === 'fim' && inputActive}
+              externalRef={fimRef}
+            />
+          </div>
         </div>
-        <div className="w-44">
-          <DateInput
-            label="Data Final" value={dataFinal} onChange={setDataFinal}
-            highlighted={navZone === 'fim' && !inputActive}
-            inputActive={navZone === 'fim' && inputActive}
-            externalRef={fimRef}
-          />
-        </div>
-        <div className="flex gap-8 ml-auto flex-wrap">
+
+        {/* Resumo em Grid */}
+        <div className="flex-1 grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-x-8 gap-y-3 w-full lg:w-auto">
           {[
             { label: 'Dinheiro', value: totalDinheiro, color: 'text-green-400' },
             { label: 'PIX',      value: totalPix,      color: 'text-blue-400' },
@@ -487,9 +492,9 @@ export default function Historico() {
             { label: 'A Prazo',  value: totalPrazo,    color: 'text-luxury-orange' },
             { label: 'TOTAL',    value: totalGeral,    color: 'text-white' },
           ].map((t, idx, arr) => (
-            <div key={t.label} className={`text-left ${idx === arr.length - 1 ? 'ml-6' : ''}`}>
-              <p className="text-[10px] text-white/30 uppercase font-bold">{t.label}</p>
-              <p className={`text-lg font-black ${t.color}`}>R$ {formatCurrency(t.value)}</p>
+            <div key={t.label} className="text-left min-w-[100px]">
+              <p className="text-[10px] text-white/30 uppercase font-bold leading-tight">{t.label}</p>
+              <p className={`text-base font-black ${t.color} leading-tight`}>R$ {formatCurrency(t.value)}</p>
             </div>
           ))}
         </div>
