@@ -18,10 +18,9 @@ export async function processarVendaFIFO(
   dataReferencia?: string // Formato YYYY-MM-DD
 ) {
   try {
-    // 1. Registrar a venda principal
     const resVenda = await db.execute(
       "INSERT INTO vendas (total_venda, metodo_pagamento, data_venda) VALUES ($1, $2, $3)",
-      [totalVenda, metodoPagamento, dataReferencia || new Date().toISOString().split('T')[0]]
+      [totalVenda, metodoPagamento, dataReferencia || new Date().toISOString()]
     );
     const vendaId = resVenda.lastInsertId;
 

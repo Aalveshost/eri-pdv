@@ -7,10 +7,15 @@ import { processarVendaFIFO } from "../utils/fifoEngine";
 import { normalizeText } from "../utils/text";
 import { formatCurrency, parseCurrencyToNumber, handleCurrencyInput } from "../utils/currency";
 
+console.log("PDV.tsx loading...");
+
 // Module-level flag: set by Layout when user presses Enter on PDV sidebar link
 // Checked on mount to decide whether to auto-focus the date input
 export let pdvShouldFocusOnMount = false;
-export function setPdvShouldFocusOnMount(val: boolean) { pdvShouldFocusOnMount = val; }
+export function setPdvShouldFocusOnMount(val: boolean) { 
+  console.log("setPdvShouldFocusOnMount called with", val);
+  pdvShouldFocusOnMount = val; 
+}
 
 // Interceptor: Layout calls this before navigating away from PDV.
 // If PDV has items in cart, it shows the exit confirm modal and returns true (blocked).
@@ -25,6 +30,13 @@ interface CartItem {
   nome: string;
   preco: number;
   quantidade: number;
+}
+
+function formatDateBR(date: Date) {
+  const d = String(date.getDate()).padStart(2, '0');
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const y = date.getFullYear();
+  return `${d}/${m}/${y}`;
 }
 
 export default function PDV() {
@@ -81,13 +93,6 @@ export default function PDV() {
   const hasUserEnteredPDV = useRef(pdvShouldFocusOnMount);
   const focusedProductIndexRef = useRef<number | null>(null);
 
-  function formatDateBR(date: Date) {
-    const d = String(date.getDate()).padStart(2, '0');
-    const m = String(date.getMonth() + 1).padStart(2, '0');
-    const y = date.getFullYear();
-    return `${d}/${m}/${y}`;
-  }
-
   const total = cart.reduce((acc, item) => acc + (item.preco * item.quantidade), 0);
 
   // Search for products (only when in selling stage)
@@ -140,11 +145,13 @@ export default function PDV() {
   }, [db, search, stage]);
 
   // Barcode integration
+  /*
   useScanner((code) => {
     if (stage === 'selling') {
       setSearch(code);
     }
   });
+  */
 
   const handleProductSelect = (product: any) => {
     setSelectedProduct(product);
@@ -620,7 +627,18 @@ export default function PDV() {
         quantidade: i.quantidade,
         precoUnitario: i.preco
       }));
-      const isoDate = vendaDate.split('/').reverse().join('-');
+      const todayBr = formatDateBR(new Date());
+      let isoDate = vendaDate.split('/').reverse().join('-');
+      
+      if (vendaDate === todayBr) {
+        // Se for hoje, anexa a hora atual
+        const now = new Date();
+        const timeStr = `T${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}:${String(now.getSeconds()).padStart(2,'0')}`;
+        isoDate += timeStr;
+      } else {
+        // Se for retroativo, usa meia-noite
+        isoDate += "T00:00:00";
+      }
 
       if (metodo === 'prazo' && clienteId) {
         // Registra no FIFO normalmente (priorizando data da venda)

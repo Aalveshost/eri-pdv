@@ -51,9 +51,12 @@ function brToIso(br: string): string {
 
 function isoToBr(iso: string): string {
   if (!iso) return '';
-  const date = iso.slice(0, 10);
-  const [y, m, d] = date.split('-');
-  return `${d}/${m}/${y}`;
+  // iso: 2024-04-27T14:30:00 or 2024-04-27
+  const parts = iso.split('T');
+  const datePart = parts[0];
+  const timePart = parts[1] ? parts[1].slice(0, 5) : ''; // HH:MM
+  const [y, m, d] = datePart.split('-');
+  return timePart ? `${d}/${m}/${y} ${timePart}` : `${d}/${m}/${y}`;
 }
 
 function isValidBrDate(br: string): boolean {
@@ -191,7 +194,7 @@ export default function Historico() {
       `SELECT v.id, v.total_venda, v.metodo_pagamento, v.data_venda, NULL as cliente_nome
        FROM vendas v
        WHERE DATE(v.data_venda) >= $1 AND DATE(v.data_venda) <= $2
-       ORDER BY v.data_venda DESC`,
+       ORDER BY v.data_venda DESC, v.id DESC`,
       [isoInicial, isoFinal]
     );
     setVendas(vs);
@@ -202,8 +205,8 @@ export default function Historico() {
       `SELECT vp.id, vp.cliente_id, vp.data_venda, vp.total, c.nome as cliente_nome
        FROM vendas_prazo vp
        JOIN clientes c ON c.id = vp.cliente_id
-       WHERE vp.data_venda >= $1 AND vp.data_venda <= $2
-       ORDER BY vp.data_venda DESC`,
+       WHERE DATE(vp.data_venda) >= $1 AND DATE(vp.data_venda) <= $2
+       ORDER BY vp.data_venda DESC, vp.id DESC`,
       [isoInicial, isoFinal]
     );
     setVendasPrazo(vp);
@@ -529,7 +532,7 @@ export default function Historico() {
                       <div className="px-4 py-3 w-8 text-white/30 shrink-0">
                         {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
                       </div>
-                      <div className="px-4 py-3 font-mono text-sm text-white/70 w-40 shrink-0">{isoToBr(v.data_venda)}</div>
+                      <div className="px-4 py-3 font-mono text-sm text-white/70 w-48 shrink-0">{isoToBr(v.data_venda)}</div>
                       <div className={`px-4 py-3 font-bold text-sm flex-1 ${meta.color}`}>{meta.label}</div>
                       <div className="px-4 py-3 text-right font-black text-white w-32 shrink-0">R$ {v.total_venda.toFixed(2)}</div>
                     </div>
@@ -578,7 +581,7 @@ export default function Historico() {
                       <div className="px-4 py-3 w-8 text-white/30 shrink-0">
                         {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
                       </div>
-                      <div className="px-4 py-3 font-mono text-sm text-white/70 w-40 shrink-0">{isoToBr(v.data_venda)}</div>
+                      <div className="px-4 py-3 font-mono text-sm text-white/70 w-48 shrink-0">{isoToBr(v.data_venda)}</div>
                       <div className="px-4 py-3 font-semibold text-luxury-orange flex-1">{v.cliente_nome}</div>
                       <div className="px-4 py-3 text-right font-black text-white w-32 shrink-0">R$ {v.total.toFixed(2)}</div>
                     </div>
