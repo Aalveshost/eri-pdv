@@ -106,7 +106,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
       if (e.key === "Escape" && document.body.hasAttribute('data-esc-handled')) return;
 
       // Detect if ANY modal is open (PDV or generic Modal)
-      const isAnyModalOpen = pdvModalOpen || !!document.querySelector('.fixed.inset-0.z-\\[100\\]') || !!document.querySelector('.fixed.inset-0.z-\\[300\\]') || !!document.querySelector('.fixed.inset-0.z-\\[400\\]');
+      const isAnyModalOpen = pdvModalOpen || !!document.querySelector('.fixed.inset-0[class*="z-"]');
       
       if (isAnyModalOpen) {
         // If it's a modal, we only allow global ESC if not handled locally
@@ -348,6 +348,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
                       if (e.key === 'Enter') {
                         e.preventDefault();
                         e.stopPropagation();
+                        e.nativeEvent.stopImmediatePropagation();
                         passwordInputRef.current?.focus();
                         const val = passwordInputRef.current?.value || "";
                         passwordInputRef.current?.setSelectionRange(val.length, val.length);
@@ -374,6 +375,11 @@ export default function Layout({ children }: { children: React.ReactNode }) {
 
                       if (!isDigit && !isControl) {
                         e.preventDefault();
+                      }
+                    }}
+                    onBlur={e => {
+                      if (showPasswordModal) {
+                        setTimeout(() => e.target.focus(), 0);
                       }
                     }}
                   />
