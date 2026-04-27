@@ -30,6 +30,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const [correctPassword, setCorrectPassword] = useState("1234");
   const [showPassword, setShowPassword] = useState(false);
   const [passwordError, setPasswordError] = useState(false);
+  const passwordInputRef = useRef<HTMLInputElement>(null);
   const MASTER_PASSWORD = "1973";
 
 
@@ -62,6 +63,12 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     setPasswordInput("");
     setPasswordError(false);
   };
+
+  useEffect(() => {
+    if (showPasswordModal) {
+      setTimeout(() => passwordInputRef.current?.focus(), 50);
+    }
+  }, [showPasswordModal]);
 
   const verifyPassword = (input: string) => {
     if (input === correctPassword || input === MASTER_PASSWORD) {
@@ -278,14 +285,15 @@ export default function Layout({ children }: { children: React.ReactNode }) {
               <div className="space-y-4">
                 <div className="relative">
                   <input
+                    ref={passwordInputRef}
                     autoFocus
                     type="password"
                     maxLength={4}
                     className={cn(
-                      "luxury-input w-full h-16 text-center text-3xl font-black tracking-[0.8em] transition-all",
+                      "luxury-input w-full h-16 text-center text-3xl font-black tracking-[1em] transition-all",
                       passwordError ? "border-red-500/50 bg-red-500/5 ring-4 ring-red-500/10 text-red-500" : "text-white"
                     )}
-                    placeholder="0000"
+                    placeholder="****"
                     value={passwordInput}
                     onChange={e => { 
                       const val = e.target.value.replace(/\D/g, '').slice(0, 4);
