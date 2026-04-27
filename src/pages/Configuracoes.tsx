@@ -270,7 +270,6 @@ export default function Configuracoes() {
                 value={form.frequencia_backup_dias}
                 onChange={e => setForm({...form, frequencia_backup_dias: parseInt(e.target.value)})}
                 onKeyDown={e => handleNav(e, 'freq')}
-                disabled={!form.caminho_backup_externo}
               >
                 <option value={1}>Diário</option>
                 <option value={2}>A cada 2 dias</option>
