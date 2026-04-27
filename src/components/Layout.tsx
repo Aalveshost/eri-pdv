@@ -339,15 +339,6 @@ export default function Layout({ children }: { children: React.ReactNode }) {
                       if (e.key === 'Enter') {
                         e.preventDefault();
                         e.stopPropagation();
-                        verifyPassword(passwordInput);
-                        // Re-focus and set cursor
-                        setTimeout(() => {
-                          if (passwordInputRef.current) {
-                            passwordInputRef.current.focus();
-                            const val = passwordInputRef.current.value;
-                            passwordInputRef.current.setSelectionRange(val.length, val.length);
-                          }
-                        }, 10);
                         return;
                       }
 
@@ -362,7 +353,9 @@ export default function Layout({ children }: { children: React.ReactNode }) {
                         setTimeout(() => {
                           const links = Array.from(document.querySelectorAll('aside nav a')) as HTMLElement[];
                           if (isConfig) {
-                            links[5]?.focus(); // HISTORICO
+                            links[6]?.focus(); // CONFIG (or 5 for HISTORICO? User said "opcao de cima")
+                            // "opcao de cima" of Config (idx 6) is Historico (idx 5)
+                            links[5]?.focus();
                           } else {
                             links[0]?.focus(); // VENDA
                           }
