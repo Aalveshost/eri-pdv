@@ -32,6 +32,9 @@ function isValidBrDate(br: string): boolean {
 // Temporary global to avoid circular dependencies if needed, or just standard state
 export let pdvModalOpen = false;
 export let pdvNavigateAwayInterceptor: (() => boolean) | null = null;
+export function setPdvShouldFocusOnMount(val: boolean) {
+  // Logic if needed, or just standard state/variable
+}
 
 interface Product {
   id: number;
