@@ -652,8 +652,10 @@ export default function PDV() {
         String(now.getMonth()+1).padStart(2,'0') +
         String(now.getFullYear())
       );
-    } catch (err) {
-      alert("Erro ao processar venda.");
+    } catch (err: any) {
+      const msg = err?.message || String(err);
+      console.error("Erro ao processar venda:", msg);
+      alert("Erro ao processar venda: " + msg);
     }
   };
 

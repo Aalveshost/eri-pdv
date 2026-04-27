@@ -153,7 +153,12 @@ export function useDatabase() {
             "ALTER TABLE lotes ADD COLUMN qtd_vendida INTEGER DEFAULT 0",
             "ALTER TABLE lotes ADD COLUMN produto_avulso_nome TEXT",
             "ALTER TABLE configuracoes ADD COLUMN senha TEXT DEFAULT '1234'",
-            "ALTER TABLE venda_itens ADD COLUMN preco_custo REAL DEFAULT 0"
+            "ALTER TABLE venda_itens ADD COLUMN preco_custo REAL DEFAULT 0",
+            // Surgery to make lote_id nullable in existing databases
+            "CREATE TABLE IF NOT EXISTS venda_itens_new (id INTEGER PRIMARY KEY AUTOINCREMENT, venda_id INTEGER NOT NULL, produto_id INTEGER NOT NULL, lote_id INTEGER, quantidade INTEGER NOT NULL, preco_unitario REAL NOT NULL, preco_custo REAL NOT NULL DEFAULT 0, FOREIGN KEY (venda_id) REFERENCES vendas(id), FOREIGN KEY (produto_id) REFERENCES produtos(id), FOREIGN KEY (lote_id) REFERENCES lotes(id))",
+            "INSERT OR IGNORE INTO venda_itens_new (id, venda_id, produto_id, lote_id, quantidade, preco_unitario, preco_custo) SELECT id, venda_id, produto_id, lote_id, quantidade, preco_unitario, preco_custo FROM venda_itens",
+            "DROP TABLE IF EXISTS venda_itens",
+            "ALTER TABLE venda_itens_new RENAME TO venda_itens"
           ];
 
           for (const m of migrations) {
