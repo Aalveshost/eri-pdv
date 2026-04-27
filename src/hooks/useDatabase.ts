@@ -137,9 +137,11 @@ export function useDatabase() {
           return;
         }
 
-        console.log("useDatabase: Iniciando banco de dados (Singleton)...");
+        console.log("useDatabase: Plugin Database carregado?", !!Database);
         initPromise = (async () => {
+          console.log("useDatabase: Chamando Database.load...");
           const _db = await Database.load("sqlite:salgados.db");
+          console.log("useDatabase: Database.load sucesso!");
           
           // Split schema by semicolon and execute each statement
           const statements = SCHEMA.split(';').filter(s => s.trim().length > 0);
