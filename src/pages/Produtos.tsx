@@ -18,7 +18,7 @@ interface Produto {
 }
 
 export default function Produtos() {
-  const { db } = useDatabase();
+  const { db, error: dbError } = useDatabase();
   const [produtos, setProdutos] = useState<Produto[]>([]);
   const [search, setSearch] = useState("");
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -227,9 +227,9 @@ export default function Produtos() {
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
-    console.log("handleSave: Iniciando...", { db: !!db, form });
+    console.log("handleSave: Iniciando...", { db: !!db, dbError, form });
     if (!db) {
-      setFormError("Banco de dados não disponível.");
+      setFormError(dbError || "Banco de dados não disponível ou inicializando...");
       return;
     }
 
