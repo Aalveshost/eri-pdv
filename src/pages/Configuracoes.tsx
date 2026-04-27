@@ -37,6 +37,20 @@ export default function Configuracoes() {
 
   const handleNav = (e: React.KeyboardEvent, field: string) => {
     if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Enter'].includes(e.key)) {
+      if (field === 'senha' && e.key === 'Enter') {
+        e.preventDefault();
+        setShowPassword(true);
+        setIsEditingPassword(true);
+        setTimeout(() => {
+          if (fSenhaRef.current) {
+            fSenhaRef.current.focus();
+            const val = fSenhaRef.current.value;
+            fSenhaRef.current.setSelectionRange(val.length, val.length);
+          }
+        }, 0);
+        return;
+      }
+
       const nav = navMap[field];
       if (!nav) return;
 
