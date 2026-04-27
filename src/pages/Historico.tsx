@@ -479,16 +479,16 @@ export default function Historico() {
             externalRef={fimRef}
           />
         </div>
-        <div className="flex gap-4 ml-auto flex-wrap">
+        <div className="flex gap-8 ml-auto flex-wrap">
           {[
             { label: 'Dinheiro', value: totalDinheiro, color: 'text-green-400' },
             { label: 'PIX',      value: totalPix,      color: 'text-blue-400' },
             { label: 'Cartão',   value: totalCartao,   color: 'text-purple-400' },
             { label: 'A Prazo',  value: totalPrazo,    color: 'text-luxury-orange' },
             { label: 'TOTAL',    value: totalGeral,    color: 'text-white' },
-          ].map(t => (
-            <div key={t.label} className="text-right">
-              <p className="text-xs text-white/30 uppercase font-bold">{t.label}</p>
+          ].map((t, idx, arr) => (
+            <div key={t.label} className={`text-left ${idx === arr.length - 1 ? 'ml-6' : ''}`}>
+              <p className="text-[10px] text-white/30 uppercase font-bold">{t.label}</p>
               <p className={`text-lg font-black ${t.color}`}>R$ {formatCurrency(t.value)}</p>
             </div>
           ))}
