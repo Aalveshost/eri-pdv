@@ -172,7 +172,7 @@ function DateInput({
       <input
         ref={inputRef}
         type="text"
-        className={`luxury-input w-full h-10 font-mono text-center tracking-widest outline-none transition-all ${
+        className={`luxury-input w-full h-10 font-mono text-center tracking-wide outline-none transition-all ${
           highlighted ? 'ring-1 ring-luxury-orange/60 border-luxury-orange/60' : ''
         } ${inputActive ? 'border-luxury-orange ring-2 ring-luxury-orange/50' : ''}`}
         value={displayValue}
@@ -465,7 +465,7 @@ export default function Historico() {
       <div className="glass-card px-4 py-3 flex flex-row gap-6 items-end">
         {/* Datas */}
         <div className="flex gap-3 shrink-0">
-          <div className="w-36">
+          <div className="w-40">
             <DateInput
               label="Data Inicial" value={dataInicial} onChange={setDataInicial}
               highlighted={navZone === 'ini' && !inputActive}
@@ -473,7 +473,7 @@ export default function Historico() {
               externalRef={iniRef}
             />
           </div>
-          <div className="w-36">
+          <div className="w-40">
             <DateInput
               label="Data Final" value={dataFinal} onChange={setDataFinal}
               highlighted={navZone === 'fim' && !inputActive}
