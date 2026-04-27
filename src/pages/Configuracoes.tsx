@@ -88,7 +88,30 @@ export default function Configuracoes() {
         fNomeRef.current.setSelectionRange(val.length, val.length);
       }
     }, 100);
-  }, []);
+
+    const handleGlobalKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        // If we are editing password, Esc should just cancel editing
+        if (isEditingPassword) {
+          setIsEditingPassword(false);
+          setShowPassword(false);
+          fSenhaRef.current?.blur();
+          e.preventDefault();
+          e.stopImmediatePropagation();
+          return;
+        }
+
+        // Otherwise, Esc goes to sidebar
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        const sidebarLink = document.querySelector('aside nav a[class*="bg-luxury-orange"]') as HTMLElement;
+        sidebarLink?.focus();
+      }
+    };
+
+    window.addEventListener('keydown', handleGlobalKey, true);
+    return () => window.removeEventListener('keydown', handleGlobalKey, true);
+  }, [isEditingPassword]);
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
