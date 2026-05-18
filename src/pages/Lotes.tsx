@@ -4,7 +4,10 @@ import { useDatabase } from "../hooks/useDatabase";
 import Modal from "../components/Modal";
 import { cn } from "../utils/cn";
 import { normalizeText } from "../utils/text";
-import { handleCurrencyInput, parseCurrencyToNumber } from "../utils/currency";
+import { handleCurrencyInput, handleWeightInput, finalizeWeightInput, parseCurrencyToNumber } from "../utils/currency";
+
+let producaoShouldFocusOnMount = false;
+export const setProducaoShouldFocusOnMount = (val: boolean) => { producaoShouldFocusOnMount = val; };
 
 interface Producao {
   id: number;
@@ -162,11 +165,19 @@ export default function ProducaoPage() {
   const [editItem, setEditItem] = useState<Producao | null>(null);
   const [editForm, setEditForm] = useState({ produzido: "", data: "", hora: "" });
   const lastFocusedRef = useRef<HTMLElement | null>(null);
+  const wasAnyModalOpen = useRef(false);
 
   const filteredSuggestions = produtos.filter(p => normalizeText(p.nome).includes(normalizeText(searchTerm))).slice(0, 3);
 
-  const openModal = () => { lastFocusedRef.current = document.activeElement as HTMLElement; setIsModalOpen(true); };
-  const closeModal = () => { setIsModalOpen(false); setIsQuickAddMode(false); setEditItem(null); setSearchTerm(""); setSelectedProd(null); setTimeout(() => lastFocusedRef.current?.focus(), 50); };
+  const openModal = () => { setIsModalOpen(true); };
+  const closeModal = () => { 
+    setIsModalOpen(false); 
+    setIsQuickAddMode(false); 
+    setEditItem(null); 
+    setSearchTerm(""); 
+    setSelectedProd(null); 
+    setTimeout(() => document.getElementById('btn-registrar')?.focus(), 150); 
+  };
 
   const loadData = async () => {
     if (!db) return;
@@ -187,17 +198,36 @@ export default function ProducaoPage() {
 
   useEffect(() => { loadData(); }, [db, selectedDate]);
 
+  // Track modal state for focus return
+  useEffect(() => {
+    if (isModalOpen || !!editItem || isQuickAddMode) {
+      wasAnyModalOpen.current = true;
+    }
+  }, [isModalOpen, editItem, isQuickAddMode]);
+
   // Initial Focus Logic
   useEffect(() => {
     if (db && !isModalOpen && !editItem && !isQuickAddMode) {
       setTimeout(() => {
-        const sidebarFocused = document.activeElement?.closest('aside');
-        if (sidebarFocused) return;
+        // Se for a montagem inicial via menu, segue a regra inteligente
+        if (producaoShouldFocusOnMount) {
+          const firstRow = document.querySelector('tbody tr[tabindex="0"]') as HTMLElement;
+          if (firstRow) {
+            firstRow.focus();
+          } else {
+            document.getElementById('btn-registrar')?.focus();
+          }
+          setProducaoShouldFocusOnMount(false);
+          wasAnyModalOpen.current = false;
+          return;
+        }
 
-        const firstRow = document.querySelector('tbody tr[tabindex="0"]') as HTMLElement;
-        if (firstRow) firstRow.focus();
-        else document.getElementById('btn-registrar')?.focus();
-      }, 300);
+        // Se estiver apenas fechando um modal, volta para o botão de registrar
+        if (wasAnyModalOpen.current) {
+          document.getElementById('btn-registrar')?.focus();
+          wasAnyModalOpen.current = false;
+        }
+      }, 150);
     }
   }, [db, isModalOpen, editItem, isQuickAddMode]);
 
@@ -239,7 +269,8 @@ export default function ProducaoPage() {
       const isoDate = `${parts[2]}-${parts[1]}-${parts[0]}`;
       const isoDateTime = `${isoDate} ${form.hora}:00`;
       await db.execute("INSERT INTO lotes (produto_id, produto_avulso_nome, data_fabricacao, data_validade, qtd_inicial, qtd_atual, qtd_vendida, status) VALUES ($1, $2, $3, $4, $5, $6, $7, 'ativo')", [selectedProd?.id || null, selectedProd ? null : searchTerm.toUpperCase(), isoDateTime, isoDateTime, parseInt(form.produzido), parseInt(form.produzido), 0]);
-      closeModal(); loadData();
+      closeModal();
+      loadData();
     } catch (err) { console.error(err); }
   };
 
@@ -395,9 +426,32 @@ export default function ProducaoPage() {
               <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-white/20" size={18} />
               <input id="input-search" ref={searchInputRef} type="text" placeholder="BUSCAR..." style={{ textTransform: 'uppercase' }} className="luxury-input w-full h-12 pl-12" value={searchTerm} onChange={e => { setSearchTerm(e.target.value.toUpperCase()); setShowResults(true); setSelectedProd(null); }} onFocus={() => setShowResults(true)}
                 onKeyDown={e => {
-                  if (e.key === 'ArrowDown') { e.preventDefault(); if (showResults && filteredSuggestions.length > 0) setActiveSuggestionIdx(p => (p + 1) % (filteredSuggestions.length + 1)); else document.getElementById('input-produzido')?.focus(); }
-                  else if (e.key === 'ArrowUp' && showResults) { e.preventDefault(); setActiveSuggestionIdx(p => (p - 1 + (filteredSuggestions.length + 1)) % (filteredSuggestions.length + 1)); }
-                  else if (e.key === 'Enter') { e.preventDefault(); if (showResults && activeSuggestionIdx >= 0) { if (activeSuggestionIdx < filteredSuggestions.length) { const p = filteredSuggestions[activeSuggestionIdx]; setSelectedProd(p); setSearchTerm(p.nome.toUpperCase()); setShowResults(false); setTimeout(() => document.getElementById('input-produzido')?.focus(), 50); } else setIsQuickAddMode(true); } else document.getElementById('input-produzido')?.focus(); }
+                  if (e.key === 'ArrowDown') { 
+                    e.preventDefault(); 
+                    if (showResults && filteredSuggestions.length > 0 && !selectedProd) {
+                      setActiveSuggestionIdx(p => (p + 1) % (filteredSuggestions.length + 1));
+                    } else {
+                      document.getElementById('input-produzido')?.focus();
+                    }
+                  }
+                  else if (e.key === 'ArrowUp' && showResults && !selectedProd) { e.preventDefault(); setActiveSuggestionIdx(p => (p - 1 + (filteredSuggestions.length + 1)) % (filteredSuggestions.length + 1)); }
+                  else if (e.key === 'ArrowUp') { e.preventDefault(); }
+                  else if (e.key === 'Enter') { 
+                    e.preventDefault(); 
+                    if (showResults && activeSuggestionIdx >= 0 && !selectedProd) { 
+                      if (activeSuggestionIdx < filteredSuggestions.length) { 
+                        const p = filteredSuggestions[activeSuggestionIdx]; 
+                        setSelectedProd(p); 
+                        setSearchTerm(p.nome.toUpperCase()); 
+                        setShowResults(false); 
+                        setTimeout(() => document.getElementById('input-produzido')?.focus(), 50); 
+                      } else {
+                        setIsQuickAddMode(true); 
+                      }
+                    } else {
+                      document.getElementById('input-produzido')?.focus(); 
+                    }
+                  }
                 }} />
               {showResults && searchTerm.length > 0 && !selectedProd && (
                 <div className="absolute top-full left-0 right-0 mt-1 bg-luxury-dark-gray border border-white/10 rounded-xl z-[400] shadow-2xl overflow-hidden">
@@ -415,12 +469,12 @@ export default function ProducaoPage() {
             <input id="input-produzido" type="number" className="luxury-input w-full h-12 text-xl font-black italic" value={form.produzido} onChange={e => setForm({...form, produzido: e.target.value})} onKeyDown={e => { if (e.key === 'ArrowDown' || e.key === 'Enter') { e.preventDefault(); document.getElementById('date-input')?.focus(); } else if (e.key === 'ArrowUp') { e.preventDefault(); searchInputRef.current?.focus(); } }} />
           </div>
           <div className="grid grid-cols-2 gap-4">
-            <DateInput id="date-input" label="Data da Produção" value={form.data} onChange={v => setForm({...form, data: v})} onKeyDown={e => { if (e.key === 'ArrowDown' || e.key === 'Enter') { e.preventDefault(); document.getElementById('time-input')?.focus(); } else if (e.key === 'ArrowUp') { e.preventDefault(); document.getElementById('input-produzido')?.focus(); } }} />
-            <TimeInput id="time-input" label="Hora" value={form.hora} onChange={v => setForm({...form, hora: v})} onKeyDown={e => { if (e.key === 'ArrowDown' || e.key === 'Enter') { e.preventDefault(); document.getElementById('btn-confirm')?.focus(); } else if (e.key === 'ArrowUp') { e.preventDefault(); document.getElementById('date-input')?.focus(); } }} />
+            <DateInput id="date-input" label="Data da Produção" value={form.data} onChange={v => setForm({...form, data: v})} onKeyDown={e => { if (e.key === 'ArrowDown' || e.key === 'Enter') { e.preventDefault(); document.getElementById('btn-confirm')?.focus(); } else if (e.key === 'ArrowUp') { e.preventDefault(); document.getElementById('input-produzido')?.focus(); } else if (e.key === 'ArrowRight') { e.preventDefault(); document.getElementById('time-input')?.focus(); } }} />
+            <TimeInput id="time-input" label="Hora" value={form.hora} onChange={v => setForm({...form, hora: v})} onKeyDown={e => { if (e.key === 'ArrowUp') { e.preventDefault(); document.getElementById('input-produzido')?.focus(); } else if (e.key === 'ArrowLeft') { e.preventDefault(); document.getElementById('date-input')?.focus(); } else if (e.key === 'ArrowDown' || e.key === 'Enter') { e.preventDefault(); document.getElementById('btn-confirm')?.focus(); } }} />
           </div>
           <div className="flex gap-4 pt-4">
-            <button id="btn-cancel" type="button" onClick={closeModal} className="flex-1 h-14 border border-white/10 rounded-xl font-bold uppercase text-[10px] tracking-widest outline-none focus:bg-red-500/10 transition-all" onKeyDown={e => { if (e.key === 'ArrowRight') { e.preventDefault(); document.getElementById('btn-confirm')?.focus(); } else if (e.key === 'ArrowUp') { e.preventDefault(); document.getElementById('time-input')?.focus(); } }}>CANCELAR</button>
-            <button id="btn-confirm" type="submit" className="btn-primary flex-1 h-14 font-black italic uppercase tracking-widest outline-none focus:ring-2 focus:ring-white/20 focus:shadow-[0_0_15px_rgba(255,107,0,0.2)] border border-transparent focus:border-white/20 transition-all">CONFIRMAR LANÇAMENTO</button>
+            <button id="btn-cancel" type="button" onClick={closeModal} className="flex-1 h-14 border border-white/10 rounded-xl font-bold uppercase text-[10px] tracking-widest outline-none focus:bg-red-500/10 transition-all" onKeyDown={e => { if (e.key === 'ArrowRight') { e.preventDefault(); document.getElementById('btn-confirm')?.focus(); } else if (e.key === 'ArrowUp') { e.preventDefault(); document.getElementById('date-input')?.focus(); } }}>CANCELAR</button>
+            <button id="btn-confirm" type="submit" className="btn-primary flex-1 h-14 font-black italic uppercase tracking-widest outline-none focus:ring-2 focus:ring-white/20 focus:shadow-[0_0_15px_rgba(255,107,0,0.2)] border border-transparent focus:border-white/20 transition-all" onKeyDown={e => { if (e.key === 'ArrowUp') { e.preventDefault(); document.getElementById('date-input')?.focus(); } else if (e.key === 'ArrowLeft') { e.preventDefault(); document.getElementById('btn-cancel')?.focus(); } }}>CONFIRMAR LANÇAMENTO</button>
           </div>
         </form>
       </Modal>
@@ -431,11 +485,24 @@ export default function ProducaoPage() {
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">
               <label className="text-[10px] uppercase font-black text-white/20">Custo</label>
-              <input type="text" autoFocus className="luxury-input w-full h-12 font-bold" value={quickForm.c} onChange={e => setQuickForm({...quickForm, c: handleCurrencyInput(e.target.value)})} placeholder="0,00" />
+              <input 
+                type="text" 
+                autoFocus 
+                className="luxury-input w-full h-12 font-bold" 
+                value={quickForm.c} 
+                onChange={e => setQuickForm({...quickForm, c: handleCurrencyInput(e.target.value)})} 
+                placeholder="0,00" 
+              />
             </div>
             <div className="space-y-2">
               <label className="text-[10px] uppercase font-black text-white/20">Venda</label>
-              <input type="text" className="luxury-input w-full h-12 font-bold text-luxury-orange" value={quickForm.v} onChange={e => setQuickForm({...quickForm, v: handleCurrencyInput(e.target.value)})} placeholder="0,00" />
+              <input 
+                type="text" 
+                className="luxury-input w-full h-12 font-bold text-luxury-orange" 
+                value={quickForm.v} 
+                onChange={e => setQuickForm({...quickForm, v: handleCurrencyInput(e.target.value)})} 
+                placeholder="0,00" 
+              />
             </div>
           </div>
           <div className="flex gap-4 pt-4">

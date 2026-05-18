@@ -540,17 +540,19 @@ export default function Produtos() {
               ref={fCancelarRef}
               type="button"
               onClick={() => { setIsModalOpen(false); setFormError(null); }}
-              className="flex-1 h-14 uppercase tracking-widest text-sm font-bold border border-white/10 rounded-xl hover:bg-red-500/10 hover:border-red-500/50 hover:text-red-500 focus:bg-red-500/10 focus:border-red-500/50 focus:text-red-500 outline-none transition-all"
+              className={`flex-1 h-12 rounded-xl uppercase text-[10px] font-bold tracking-[0.1em] transition-all outline-none border
+                focus:bg-red-600 focus:border-transparent focus:text-white focus:ring-2 focus:ring-white/50 focus:shadow-lg focus:shadow-red-600/20 focus:scale-[1.02]
+                bg-red-600/10 border-red-500/10 text-red-400 hover:bg-red-600/20`}
               onKeyDown={e => handleFormNav(e, 'cancelar')}
             >
-              Cancelar
+              Cancelar (ESC)
             </button>
             <button
               ref={fGravarRef}
               type="submit"
               className={cn(
-                "btn-primary flex-1 h-14 font-black italic tracking-widest uppercase transition-all duration-300",
-                "focus:ring-4 focus:ring-white/20 focus:border-white/40 focus:shadow-[0_0_20px_rgba(255,107,0,0.3)] outline-none"
+                "flex-1 h-12 rounded-xl uppercase text-[10px] font-bold tracking-[0.1em] transition-all outline-none shadow-lg",
+                "bg-luxury-orange text-white opacity-90 focus:opacity-100 focus:ring-2 focus:ring-white/50 focus:shadow-luxury-orange/30 focus:scale-[1.02]"
               )}
               onKeyDown={e => handleFormNav(e, 'gravar')}
             >
@@ -561,32 +563,45 @@ export default function Produtos() {
       </Modal>
 
       {deleteConfirm && createPortal(
-        <div className="fixed inset-0 z-[200] flex items-center justify-center p-6 bg-black/80 backdrop-blur-sm"
-          onClick={e => { if (e.target === e.currentTarget) setDeleteConfirm(null); }}>
-          <div className="glass-card w-full max-w-sm p-8 border-red-500/20">
-            <h3 className="text-xl font-black italic text-red-400 uppercase tracking-tighter mb-2">Excluir produto?</h3>
-            <p className="text-white/50 text-sm mb-1">Você está prestes a excluir:</p>
-            <p className="text-white font-bold mb-6 truncate">{deleteConfirm.nome}</p>
-            <div className="space-y-2">
+        <div 
+          className="fixed inset-0 z-[200] flex items-center justify-center p-6 bg-black/90 backdrop-blur-md outline-none"
+          tabIndex={0}
+          autoFocus
+          onKeyDown={e => {
+            e.stopPropagation();
+            if (e.key === 'Escape') setDeleteConfirm(null);
+            if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+              e.preventDefault();
+              const btns = document.querySelectorAll('[data-delete-btn]');
+              const current = document.activeElement as HTMLElement;
+              if (current === btns[0]) (btns[1] as HTMLElement).focus();
+              else (btns[0] as HTMLElement).focus();
+            }
+          }}
+          onClick={e => { if (e.target === e.currentTarget) setDeleteConfirm(null); }}
+        >
+          <div className="glass-card w-full max-w-sm p-8 border-red-500/20 text-center animate-in zoom-in duration-200">
+            <div className="w-16 h-16 rounded-full bg-red-500/10 flex items-center justify-center mx-auto mb-6 border border-red-500/20">
+              <Trash2 size={32} className="text-red-500" />
+            </div>
+            <h3 className="text-xl font-bold text-white uppercase mb-2 tracking-tight">Excluir Produto</h3>
+            <p className="text-white/40 text-xs mb-6 uppercase tracking-[0.1em] leading-relaxed">
+              Você está prestes a excluir permanentemente: <br/>
+              <span className="text-red-400 font-bold block mt-1">{deleteConfirm.nome}</span>
+            </p>
+            
+            <div className="grid grid-cols-2 gap-3">
               <button
-                autoFocus
-                onClick={handleDelete}
-                className={cn(
-                  "w-full h-12 rounded-xl bg-red-600 hover:bg-red-700 text-white font-black uppercase tracking-widest text-sm transition-all duration-300",
-                  "focus:ring-4 focus:ring-white/20 focus:border-white/40 focus:shadow-[0_0_20px_rgba(239,68,68,0.4)] outline-none"
-                )}
+                data-delete-btn
+                onClick={() => setDeleteConfirm(null)}
+                className="h-12 border border-white/5 rounded-xl font-bold uppercase text-[9px] tracking-widest text-white/30 hover:text-white hover:bg-white/5 transition-all focus:ring-2 focus:ring-white/50 outline-none"
               >
-                Sim, excluir
+                CANCELAR (ESC)
               </button>
               <button
-                onClick={() => {
-                  setDeleteConfirm(null);
-                  setRowMode('actions');
-                  setTimeout(() => {
-                    const btns = document.querySelectorAll(`[data-action-row="${deleteConfirmRowIdx}"]`) as NodeListOf<HTMLElement>;
-                    btns[btns.length - 1]?.focus();
-                  }, 0);
-                }}
+                data-delete-btn
+                autoFocus
+                onClick={handleDelete}
                 className="w-full h-12 rounded-xl border border-white/10 hover:bg-red-500/10 hover:border-red-500/50 hover:text-red-500 focus:bg-red-500/10 focus:border-red-500/50 focus:text-red-500 outline-none transition-all font-bold uppercase text-xs tracking-widest"
               >
                 Cancelar

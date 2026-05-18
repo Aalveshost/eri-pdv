@@ -1,9 +1,18 @@
 import { useState, useEffect, useRef } from "react";
-import { Save, Database, Folder, RefreshCw, Upload, Lock, Eye, EyeOff } from "lucide-react";
+import { Save, Database, Folder, RefreshCw, Upload, Lock, Eye, EyeOff, Check } from "lucide-react";
 import { useDatabase } from "../hooks/useDatabase";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import { cn } from "../utils/cn";
+import {
+  DEFAULT_ACCESS_PASSWORD,
+  isValidAccessPassword,
+  normalizeStoredAccessPassword,
+  sanitizeAccessPassword,
+} from "../utils/accessPassword";
+
+let configShouldFocusOnMount = false;
+export const setConfigShouldFocusOnMount = (val: boolean) => { configShouldFocusOnMount = val; };
 
 export default function Configuracoes() {
   const { db } = useDatabase();
@@ -12,10 +21,11 @@ export default function Configuracoes() {
     dias_alerta_validade: 5,
     caminho_backup_externo: "",
     nome_loja: "Salgados Pro",
-    senha: "1234"
+    frequencia_backup_dias: 7,
+    senha: DEFAULT_ACCESS_PASSWORD
   });
   const [showPassword, setShowPassword] = useState(false);
-  const [isEditingPassword, setIsEditingPassword] = useState(false);
+  const [showSuccess, setShowSuccess] = useState(false);
 
   const fNomeRef = useRef<HTMLInputElement>(null);
   const fSenhaRef = useRef<HTMLInputElement>(null);
@@ -25,37 +35,49 @@ export default function Configuracoes() {
   const fImportBtnRef = useRef<HTMLButtonElement>(null);
   const fSalvarBtnRef = useRef<HTMLButtonElement>(null);
 
-  const navMap: Record<string, { up?: React.RefObject<any>; down?: React.RefObject<any>; left?: React.RefObject<any>; right?: React.RefObject<any> }> = {
+  const navMap: Record<string, any> = {
     nome: { down: fSenhaRef, right: fCaminhoRef },
-    senha: { up: fNomeRef, right: fFreqRef, down: form.caminho_backup_externo ? fBackupBtnRef : fImportBtnRef },
+    senha: { up: fNomeRef, right: fFreqRef, down: fBackupBtnRef },
     caminho: { left: fNomeRef, down: fFreqRef },
-    freq: { up: fCaminhoRef, left: fSenhaRef, down: form.caminho_backup_externo ? fBackupBtnRef : fImportBtnRef, right: fBackupBtnRef },
+    freq: { up: fCaminhoRef, left: fSenhaRef, down: fBackupBtnRef, right: fBackupBtnRef },
     backup: { up: fFreqRef, left: fSenhaRef, down: fImportBtnRef },
-    import: { up: form.caminho_backup_externo ? fBackupBtnRef : fFreqRef, left: fSenhaRef, down: fSalvarBtnRef },
-    salvar: { up: fSenhaRef, left: fImportBtnRef }
+    import: { up: fBackupBtnRef, left: fSenhaRef, down: fSalvarBtnRef },
+    salvar: { up: fImportBtnRef, left: fImportBtnRef }
   };
 
   const handleNav = (e: React.KeyboardEvent, field: string) => {
     const isEnter = e.key === 'Enter';
     const isTab = e.key === 'Tab';
-    const isArrow = ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key);
+    const isArrow = ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Escape'].includes(e.key);
 
     if (!isEnter && !isTab && !isArrow) return;
 
-    // Special Case: Enter on Password toggles visibility/edit
-    if (field === 'senha' && isEnter) {
-      e.preventDefault();
-      e.stopPropagation();
-      setShowPassword(prev => !prev);
-      setIsEditingPassword(true);
-      setTimeout(() => {
-        if (fSenhaRef.current) {
-          fSenhaRef.current.focus();
-          const val = fSenhaRef.current.value;
-          fSenhaRef.current.setSelectionRange(val.length, val.length);
-        }
-      }, 0);
-      return;
+    // Special Case: Password field logic
+    if (field === 'senha') {
+      if (isEnter) {
+        e.preventDefault();
+        e.stopPropagation();
+        setShowPassword(prev => !prev);
+        setTimeout(() => {
+          if (fSenhaRef.current) {
+            fSenhaRef.current.focus();
+            const val = fSenhaRef.current.value;
+            fSenhaRef.current.setSelectionRange(val.length, val.length);
+          }
+        }, 0);
+        return;
+      }
+      // Block ArrowLeft to prevent cursor movement
+      if (e.key === 'ArrowLeft') {
+        e.preventDefault();
+        return;
+      }
+      // Force ArrowRight to go to Freq regardless of cursor position
+      if (e.key === 'ArrowRight') {
+        e.preventDefault();
+        fFreqRef.current?.focus();
+        return;
+      }
     }
 
     const nav = navMap[field];
@@ -90,7 +112,7 @@ export default function Configuracoes() {
           caminho_backup_externo: res[0].caminho_backup_externo || "",
           nome_loja: res[0].nome_loja || "Salgados Pro",
           frequencia_backup_dias: res[0].frequencia_backup_dias || 7,
-          senha: res[0].senha || "1234"
+          senha: normalizeStoredAccessPassword(res[0].senha)
         });
       }
     } catch (err) {
@@ -103,29 +125,19 @@ export default function Configuracoes() {
   }, [db]);
 
   useEffect(() => {
-    // Focus and cursor at end for Nome Loja on mount
+    // Focus and cursor at end for Nome Loja on mount ONLY if explicit Enter was used
     setTimeout(() => {
-      const sidebarFocused = document.activeElement?.closest('aside');
-      if (!sidebarFocused && fNomeRef.current) {
+      if (configShouldFocusOnMount && fNomeRef.current) {
         fNomeRef.current.focus();
         const val = fNomeRef.current.value;
         fNomeRef.current.setSelectionRange(val.length, val.length);
+        configShouldFocusOnMount = false; // Reset for next time
       }
     }, 100);
 
     const handleGlobalKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
-        // If we are editing password, Esc should just cancel editing
-        if (isEditingPassword) {
-          setIsEditingPassword(false);
-          setShowPassword(false);
-          fSenhaRef.current?.blur();
-          e.preventDefault();
-          e.stopImmediatePropagation();
-          return;
-        }
-
-        // Otherwise, Esc goes to sidebar
+        // ESC goes to sidebar
         e.preventDefault();
         e.stopImmediatePropagation();
         const sidebarLink = document.querySelector('aside nav a[class*="bg-luxury-orange"]') as HTMLElement;
@@ -135,11 +147,18 @@ export default function Configuracoes() {
 
     window.addEventListener('keydown', handleGlobalKey, true);
     return () => window.removeEventListener('keydown', handleGlobalKey, true);
-  }, [isEditingPassword]);
+  }, []);
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!db) return;
+
+    if (!isValidAccessPassword(form.senha)) {
+      alert("A senha deve ter exatamente 4 caracteres usando apenas letras de a a z e numeros de 0 a 9.");
+      fSenhaRef.current?.focus();
+      return;
+    }
+
     setLoading(true);
 
     try {
@@ -147,9 +166,11 @@ export default function Configuracoes() {
         "UPDATE configuracoes SET dias_alerta_validade = $1, caminho_backup_externo = $2, nome_loja = $3, frequencia_backup_dias = $4, senha = $5 WHERE id = 1",
         [form.dias_alerta_validade, form.caminho_backup_externo, form.nome_loja, form.frequencia_backup_dias, form.senha]
       );
-      alert("Configurações salvas com sucesso!");
+      
+      setShowSuccess(true);
+      setTimeout(() => setShowSuccess(false), 1500);
     } catch (err) {
-      alert("Erro ao salvar configurações.");
+      console.error("Erro ao salvar:", err);
     } finally {
       setLoading(false);
     }
@@ -218,6 +239,7 @@ export default function Configuracoes() {
               <span className="text-xs uppercase tracking-widest text-white/40 font-bold mb-2 block">Nome da Loja / Unidade</span>
               <input 
                 ref={fNomeRef}
+                name="nome_loja"
                 type="text" 
                 className="luxury-input w-full h-12"
                 value={form.nome_loja}
@@ -230,20 +252,16 @@ export default function Configuracoes() {
               <label className="block">
                 <div className="flex justify-between items-end mb-2">
                   <span className="text-xs uppercase tracking-widest text-white/40 font-bold block">Senha de Acesso (Outras áreas)</span>
-                  {isEditingPassword && <span className="text-[10px] text-luxury-orange font-bold animate-pulse">EDITANDO...</span>}
                 </div>
                 <div className="relative">
                   <input 
                     ref={fSenhaRef}
-                    type={(showPassword || isEditingPassword) ? "text" : "password"} 
-                    className={cn(
-                      "luxury-input w-full h-12 pr-12 font-mono text-xl tracking-[0.3em] transition-all",
-                      isEditingPassword ? "border-luxury-orange ring-1 ring-luxury-orange/20" : "opacity-80"
-                    )}
-                    readOnly={!isEditingPassword}
+                    type={showPassword ? "text" : "password"} 
+                    className="luxury-input w-full h-12 pr-12 font-mono text-xl tracking-[0.3em] transition-all opacity-80 focus:opacity-100 focus:border-luxury-orange focus:ring-1 focus:ring-luxury-orange/20"
                     value={form.senha}
-                    onChange={e => setForm({...form, senha: e.target.value.slice(0, 8)})}
-                    onBlur={() => { setIsEditingPassword(false); setShowPassword(false); }}
+                    maxLength={4}
+                    onChange={e => setForm({...form, senha: sanitizeAccessPassword(e.target.value)})}
+                    onBlur={() => setShowPassword(false)}
                     onKeyDown={e => handleNav(e, 'senha')}
                   />
                   <button 
@@ -255,7 +273,7 @@ export default function Configuracoes() {
                     {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
                   </button>
                 </div>
-                <span className="text-[10px] text-white/20 mt-2 block italic">Esta senha será pedida sempre que sair da tela de Venda.</span>
+                <span className="text-[10px] text-white/20 mt-2 block italic">Use exatamente 4 caracteres com letras de a a z e numeros de 0 a 9.</span>
               </label>
             </div>
           </div>
@@ -320,7 +338,7 @@ export default function Configuracoes() {
                 onClick={handleManualBackup}
                 disabled={loading || !form.caminho_backup_externo}
                 onKeyDown={e => handleNav(e, 'backup')}
-                className="w-full flex items-center justify-center gap-2 h-12 rounded-xl border border-white/10 hover:bg-white/5 transition-all uppercase text-xs font-black tracking-widest disabled:opacity-50 disabled:cursor-not-allowed"
+                className="w-full flex items-center justify-center gap-2 h-12 rounded-xl border border-white/10 hover:bg-white/5 focus:bg-white/5 focus:border-[#eeeeee] focus:ring-1 focus:ring-white/20 transition-all uppercase text-xs font-black tracking-widest disabled:opacity-50 disabled:cursor-not-allowed outline-none"
               >
                 <RefreshCw size={16} className={loading ? "animate-spin" : ""} />
                 Executar Backup Agora
@@ -331,7 +349,7 @@ export default function Configuracoes() {
                 onClick={handleImportBackup}
                 disabled={loading}
                 onKeyDown={e => handleNav(e, 'import')}
-                className="w-full flex items-center justify-center gap-2 h-12 rounded-xl border border-white/10 hover:bg-white/5 transition-all uppercase text-xs font-black tracking-widest"
+                className="w-full flex items-center justify-center gap-2 h-12 rounded-xl border border-white/10 hover:bg-white/5 focus:bg-white/5 focus:border-[#eeeeee] focus:ring-1 focus:ring-white/20 transition-all uppercase text-xs font-black tracking-widest outline-none"
               >
                 <Upload size={16} />
                 Importar Backup
@@ -347,12 +365,24 @@ export default function Configuracoes() {
           onClick={handleSave}
           disabled={loading}
           onKeyDown={e => handleNav(e, 'salvar')}
-          className="btn-primary flex items-center gap-2 px-10 h-14"
+          className="btn-primary flex items-center gap-2 px-10 h-14 focus:ring-2 focus:ring-white/50 focus:border-[#eeeeee] transition-all outline-none"
         >
           <Save size={20} />
           Salvar Alterações
         </button>
       </div>
+
+      {/* Notificação de Sucesso */}
+      {showSuccess && (
+        <div className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-[500] animate-in fade-in zoom-in duration-300">
+          <div className="bg-green-500/20 backdrop-blur-md border border-green-500/30 text-green-400 px-6 py-3 rounded-full flex items-center gap-3 shadow-2xl shadow-green-500/10">
+            <div className="bg-green-500 text-black rounded-full p-1">
+              <Check size={14} strokeWidth={4} />
+            </div>
+            <span className="font-bold uppercase tracking-widest text-xs">Configurações Salvas!</span>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

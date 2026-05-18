@@ -15,7 +15,15 @@ import {
 } from "lucide-react";
 import { useDatabase } from "../hooks/useDatabase";
 import { setPdvShouldFocusOnMount, pdvNavigateAwayInterceptor, pdvModalOpen } from "../pages/PDV";
+import { setConfigShouldFocusOnMount } from "../pages/Configuracoes";
+import { setProducaoShouldFocusOnMount } from "../pages/Lotes";
 import { cn } from "../utils/cn";
+import {
+  DEFAULT_ACCESS_PASSWORD,
+  canUnlockWithAccessPassword,
+  normalizeStoredAccessPassword,
+  sanitizeAccessPassword,
+} from "../utils/accessPassword";
 
 export default function Layout({ children }: { children: React.ReactNode }) {
   const location = useLocation();
@@ -23,11 +31,12 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const { db } = useDatabase();
   const [nomeLoja, setNomeLoja] = useState("Salgados Pro");
   const [isSidebarFocused, setIsSidebarFocused] = useState(false);
+  const sidebarFocusedRef = useRef(false);
   const [isUnlocked, setIsUnlocked] = useState(false);
   const [showPasswordModal, setShowPasswordModal] = useState(false);
   const [passwordInput, setPasswordInput] = useState("");
   const [pendingPath, setPendingPath] = useState<string | null>(null);
-  const [correctPassword, setCorrectPassword] = useState("1234");
+  const [correctPassword, setCorrectPassword] = useState(DEFAULT_ACCESS_PASSWORD);
   const [showPassword, setShowPassword] = useState(false);
   const [passwordError, setPasswordError] = useState(false);
   const passwordInputRef = useRef<HTMLInputElement>(null);
@@ -41,7 +50,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
         const rows = res as any[]; 
         if (rows.length > 0) {
           setNomeLoja(rows[0].nome_loja || "Salgados Pro"); 
-          setCorrectPassword(rows[0].senha || "1234");
+          setCorrectPassword(normalizeStoredAccessPassword(rows[0].senha));
         }
       })
       .catch(() => {});
@@ -54,14 +63,13 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   }, [location.pathname]);
 
   const handleProtectedNavigation = (path: string) => {
-    // If going to PDV, just go
     if (path === "/") {
+      setIsUnlocked(false);
       navigate("/");
       return;
     }
     
-    // Always ask password for Config and Dashboard, OR ask if system is locked for other protected pages
-    if (path === "/config" || path === "/dashboard" || !isUnlocked) {
+    if (!isUnlocked) {
       setPendingPath(path);
       setShowPasswordModal(true);
       setPasswordInput("");
@@ -79,7 +87,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   }, [showPasswordModal]);
 
   const verifyPassword = (input: string) => {
-    if (input === correctPassword || input === MASTER_PASSWORD) {
+    if (canUnlockWithAccessPassword(input, correctPassword, MASTER_PASSWORD)) {
       setIsUnlocked(true);
       setShowPasswordModal(false);
       if (pendingPath) navigate(pendingPath);
@@ -105,36 +113,65 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     const handleArrows = (e: KeyboardEvent) => {
       if (e.key === "Escape" && document.body.hasAttribute('data-esc-handled')) return;
 
-      // Detect if ANY modal is open (PDV or generic Modal)
       const isAnyModalOpen = pdvModalOpen || !!document.querySelector('.fixed.inset-0[class*="z-"]');
       
       if (isAnyModalOpen) {
-        // If it's a modal, we only allow global ESC if not handled locally
         if (e.key === "Escape" && !document.querySelector('.fixed.inset-0.z-\\[100\\]') && !document.querySelector('.fixed.inset-0.z-\\[300\\]')) {
-          // fallback
+          // Permite passar
         } else {
           return; 
         }
       }
+      
+      const activeEl = document.activeElement as HTMLElement;
+      const isInput = activeEl && ["INPUT", "TEXTAREA", "SELECT"].includes(activeEl.tagName);
+      const hasTabIndex = activeEl && activeEl.tabIndex >= 0;
+      const isInteractive = isInput || (activeEl && activeEl.tagName === "BUTTON") || hasTabIndex;
+      
+      if (e.key === "Escape") {
+        e.preventDefault();
 
-      const isSidebarFocused = document.activeElement?.closest('aside') !== null;
-      const isMainFocused = document.activeElement?.closest('main') !== null;
+        if (isInput) {
+          (activeEl as HTMLElement).blur();
+        } else {
+          const activeSidebarLink = document.querySelector('aside nav a[class*="bg-luxury-orange"]') as HTMLElement;
+          if (activeSidebarLink) {
+              activeSidebarLink.focus();
+          }
+        }
+        return;
+      }
 
-      // Don't intercept keys while user is typing in an input inside main
-      if (!isSidebarFocused && ["INPUT", "TEXTAREA"].includes((e.target as HTMLElement).tagName)) return;
+      // If we are in the main content area (not sidebar) and pressing arrows,
+      // prevent global sidebar navigation to avoid accidental page changes.
+      const isSidebarFocused = sidebarFocusedRef.current;
+      if (!isSidebarFocused) {
+        if (isInteractive) return;
+        
+        // Extra guard for PDV page: if focus is anywhere in the main container,
+        // arrows should stay local to the page logic.
+        const mainContent = document.querySelector('main');
+        if (mainContent && mainContent.contains(activeEl)) return;
+      }
 
-      // ESC fallback ou ativação da sidebar se foco perdido (/aprazo gerencia isso internamente)
-      if (!isSidebarFocused && !isMainFocused && e.key && location.pathname !== '/aprazo') {
-        if (["Escape", "ArrowDown", "ArrowUp"].includes(e.key)) {
-            e.preventDefault();
-            const activeSidebarLink = document.querySelector('aside nav a[class*="bg-luxury-orange"]') as HTMLElement;
-            activeSidebarLink?.focus();
-            return;
+      if (!sidebarFocusedRef.current && !isInteractive) {
+        const idx = menuItems.findIndex(m => m.path === location.pathname);
+        const goNext = e.key === "ArrowDown";
+        const goPrev = e.key === "ArrowUp";
+
+        if (goNext && idx >= 0 && idx < menuItems.length - 1) {
+          e.preventDefault();
+          handleProtectedNavigation(menuItems[idx + 1].path);
+          return;
+        }
+        if (goPrev && idx > 0) {
+          e.preventDefault();
+          handleProtectedNavigation(menuItems[idx - 1].path);
+          return;
         }
       }
 
-      // Logica da Sidebar (Quando foco esta na esquerda)
-      if (isSidebarFocused) {
+      if (sidebarFocusedRef.current) {
         const links = Array.from(document.querySelectorAll('aside nav a')) as HTMLElement[];
         const idx = links.indexOf(document.activeElement as HTMLElement);
 
@@ -188,48 +225,50 @@ export default function Layout({ children }: { children: React.ReactNode }) {
               else if (firstFocusable) firstFocusable.focus();
             }, 50);
           } else if (href) {
+            if (href === '/config') {
+              if (location.pathname === '/config') {
+                const input = document.querySelector('input[name="nome_loja"]') as HTMLInputElement;
+                if (input) {
+                  input.focus();
+                  input.setSelectionRange(input.value.length, input.value.length);
+                }
+              } else {
+                setConfigShouldFocusOnMount(true);
+              }
+            }
+            if (href === '/lotes') {
+              if (location.pathname === '/lotes') {
+                const firstRow = document.querySelector('tbody tr[tabindex="0"]') as HTMLElement;
+                if (firstRow) {
+                  firstRow.focus();
+                } else {
+                  document.getElementById('btn-registrar')?.focus();
+                }
+              } else {
+                setProducaoShouldFocusOnMount(true);
+              }
+            }
             handleProtectedNavigation(href);
           }
         }
         return;
       }
-
-      // Lógica do Main Content (Quando foco esta na direita)
-      const isAprazo = location.pathname === '/aprazo';
-      if (isMainFocused && e.key === "Escape" && !isAprazo) {
-        if (location.pathname === '/pdv' && pdvNavigateAwayInterceptor?.()) {
-          return; 
-        }
-
-        const activeEl = document.activeElement;
-        const isInput = activeEl && ["INPUT", "TEXTAREA", "SELECT"].includes(activeEl.tagName);
-
-        e.preventDefault();
-
-        if (isInput) {
-          // 1st ESC: Just blur the input
-          (activeEl as HTMLElement).blur();
-        } else {
-          // 2nd ESC (or no input focused): Go to sidebar
-          const activeSidebarLink = document.querySelector('aside nav a[class*="bg-luxury-orange"]') as HTMLElement;
-          if (activeSidebarLink) {
-              activeSidebarLink.focus();
-          }
-        }
-      }
     };
-    const handleFocus = () => setIsSidebarFocused(document.activeElement?.closest('aside') !== null);
+    const handleFocus = () => {
+      const focused = document.activeElement?.closest('aside') !== null;
+      setIsSidebarFocused(focused);
+      sidebarFocusedRef.current = focused;
+    };
     window.addEventListener("keydown", handleArrows, true);
     window.addEventListener("focusin", handleFocus);
     return () => {
       window.removeEventListener("keydown", handleArrows, true);
       window.removeEventListener("focusin", handleFocus);
     };
-  }, [location.pathname, navigate]);
+  }, [location.pathname, navigate, isUnlocked]);
 
   return (
     <div className="flex h-screen w-screen bg-background text-white overflow-hidden font-sans selection:bg-luxury-orange/30">
-      {/* Sidebar */}
       <aside className="w-56 border-r border-white/5 bg-black/20 flex flex-col p-4 shrink-0 relative z-20">
         <div className="flex items-center gap-3 mb-4 px-2">
           <div className="w-10 h-10 bg-luxury-orange rounded-xl flex items-center justify-center shadow-lg shadow-luxury-orange/20 shrink-0">
@@ -251,15 +290,19 @@ export default function Layout({ children }: { children: React.ReactNode }) {
                 if (location.pathname === '/' && item.path !== '/' && pdvNavigateAwayInterceptor?.()) {
                   return;
                 }
+                if (item.path === '/config') {
+                  setConfigShouldFocusOnMount(true);
+                }
+                if (item.path === '/lotes') {
+                  setProducaoShouldFocusOnMount(true);
+                }
                 handleProtectedNavigation(item.path);
               }}
               className={cn(
-                "flex items-center gap-3 px-4 py-3 rounded-xl group focus:outline-none no-underline transition-all duration-200",
+                "flex items-center gap-3 px-4 py-3 rounded-xl transition-all outline-none",
                 location.pathname === item.path
-                  ? isSidebarFocused && document.activeElement?.getAttribute('href') === item.path
-                    ? "bg-luxury-orange text-white shadow-lg shadow-luxury-orange/20" // Img 2: Active + Focused
-                    : "border border-luxury-orange/30 bg-luxury-orange/5 text-luxury-orange shadow-sm" // Img 3: Active + Not Focused
-                  : "text-white/40 hover:bg-white/5 hover:text-white focus:bg-white/10 focus:text-white"
+                  ? "bg-luxury-orange text-black font-bold shadow-lg shadow-luxury-orange/20"
+                  : "text-white/40 hover:text-white hover:bg-white/5"
               )}
             >
               <item.icon size={20} className={cn(
@@ -333,7 +376,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
                     placeholder="****"
                     value={passwordInput}
                     onChange={e => { 
-                      const val = e.target.value.replace(/\D/g, '').slice(0, 4);
+                      const val = sanitizeAccessPassword(e.target.value);
                       setPasswordError(false); 
                       setPasswordInput(val);
                       if (val.length === 4) {
@@ -341,8 +384,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
                       }
                     }}
                     onKeyDown={e => { 
-                      // Allow only digits and control keys
-                      const isDigit = /^\d$/.test(e.key);
+                      const isAlphaNumeric = /^[a-zA-Z0-9]$/.test(e.key);
                       const isControl = ['Backspace', 'Tab', 'ArrowLeft', 'ArrowRight', 'Delete'].includes(e.key);
 
                       if (e.key === 'Enter') {
@@ -355,25 +397,38 @@ export default function Layout({ children }: { children: React.ReactNode }) {
                         return;
                       }
 
-                      if (e.key === 'Escape') {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        
-                        const targetPath = pendingPath;
-                        setShowPasswordModal(false);
-                        setPendingPath(null);
-                        
-                        // Smart focus return: focus the item above the one we tried to open
-                        setTimeout(() => {
-                          const links = Array.from(document.querySelectorAll('aside nav a')) as HTMLElement[];
-                          const menuIdx = menuItems.findIndex(m => m.path === targetPath);
-                          const prevIdx = Math.max(0, menuIdx - 1);
-                          links[prevIdx]?.focus();
-                        }, 50);
-                        return;
-                      }
+                        if (e.key === 'Escape') {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          
+                          const targetPath = pendingPath;
+                          setShowPasswordModal(false);
+                          setPendingPath(null);
+                          
+                          // Smart focus return
+                          setTimeout(() => {
+                            if (location.pathname === '/') {
+                              // If we are in PDV, focus the date input
+                              const dateInput = document.getElementById('header-date-input') as HTMLInputElement;
+                              if (dateInput) {
+                                dateInput.focus();
+                                // Double-tap to ensure selection range is applied after focus
+                                setTimeout(() => {
+                                  dateInput.setSelectionRange(0, 0);
+                                }, 10);
+                              }
+                            } else {
+                              // Standard behavior for other pages
+                              const links = Array.from(document.querySelectorAll('aside nav a')) as HTMLElement[];
+                              const menuIdx = menuItems.findIndex(m => m.path === targetPath);
+                              const prevIdx = Math.max(0, menuIdx - 1);
+                              links[prevIdx]?.focus();
+                            }
+                          }, 50);
+                          return;
+                        }
 
-                      if (!isDigit && !isControl) {
+                      if (!isAlphaNumeric && !isControl) {
                         e.preventDefault();
                       }
                     }}

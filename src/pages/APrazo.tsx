@@ -69,7 +69,10 @@ function brToIso(br: string): string {
 /** Converte YYYY-MM-DD → DD/MM/YYYY para exibição */
 function isoToBr(iso: string): string {
   if (!iso) return '';
-  const [y, m, d] = iso.split('-');
+  // Limpa possíveis horas (T00:00:00) antes de dar split
+  const cleanIso = iso.includes('T') ? iso.split('T')[0] : iso;
+  const [y, m, d] = cleanIso.split('-');
+  if (!y || !m || !d) return iso; // Fallback se o formato for estranho
   return `${d}/${m}/${y}`;
 }
 
@@ -2130,10 +2133,28 @@ function TelaConta({ db, cliente, onVoltar, autoFocusItems }: { db: any; cliente
       {/* Modal editar item */}
       {editItem && (
         <ModalOverlay onClose={closeEditItem}>
-          <div className="glass-card w-[500px] p-8 border-luxury-orange/20" onKeyDown={e => e.stopPropagation()}>
+          <div 
+            className="glass-card w-[500px] p-8 border-luxury-orange/20 outline-none" 
+            tabIndex={0}
+            onKeyDown={e => {
+              e.stopPropagation();
+              if (e.key === 'Escape') { e.preventDefault(); closeEditItem(); }
+              
+              // Navegação entre botões se estivermos na zona de botões
+              if (eiField === 'btns') {
+                if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+                  e.preventDefault();
+                  const next = eiBtnFocus === 0 ? 1 : 0;
+                  setEiBtnFocus(next);
+                  if (next === 0) eiCancelarBtnRef.current?.focus();
+                  else eiSalvarBtnRef.current?.focus();
+                }
+              }
+            }}
+          >
             <div className="flex justify-between items-start mb-8">
               <h3 className="text-2xl font-black italic text-luxury-orange uppercase tracking-tighter leading-none">Editar Item</h3>
-              <button onClick={closeEditItem} className="text-white/20 hover:text-white transition-colors"><X size={20} /></button>
+              <button type="button" onClick={closeEditItem} className="text-white/20 hover:text-white transition-colors"><X size={20} /></button>
             </div>
             
             {itemError && (
@@ -2223,25 +2244,27 @@ function TelaConta({ db, cliente, onVoltar, autoFocusItems }: { db: any; cliente
                 </div>
               </div>
 
-              <div className="flex gap-4 pt-4 border-t border-white/5">
+              <div className="flex gap-4 pt-6 border-t border-white/5">
                 <button
                   ref={eiCancelarBtnRef}
                   type="button"
                   onClick={closeEditItem}
                   onFocus={() => { setEiField('btns'); setEiBtnFocus(0); }}
-                  style={{ fontWeight: 700 }}
-                  className={`flex-1 h-14 rounded-xl uppercase text-sm font-bold tracking-[0.05em] transition-all outline-none border
-                    ${eiField === 'btns' && eiBtnFocus === 0 ? 'bg-white/10 border-white/20 text-white' : 'border-white/5 text-white/20 hover:bg-white/5'}`}
+                  className={`flex-1 h-12 rounded-xl uppercase text-[10px] font-bold tracking-[0.1em] transition-all outline-none border
+                    ${eiField === 'btns' && eiBtnFocus === 0 
+                      ? 'bg-red-600 border-transparent text-white ring-2 ring-white/50 shadow-lg shadow-red-600/20 scale-[1.02]' 
+                      : 'bg-red-600/10 border-red-500/10 text-red-400 hover:bg-red-600/20'}`}
                 >
-                  Cancelar
+                  Cancelar (ESC)
                 </button>
                 <button
                   ref={eiSalvarBtnRef}
                   type="submit"
                   onFocus={() => { setEiField('btns'); setEiBtnFocus(1); }}
-                  style={{ fontWeight: 700 }}
-                  className={`flex-1 h-14 rounded-xl uppercase text-sm font-bold tracking-[0.05em] transition-all outline-none shadow-lg
-                    ${eiField === 'btns' && eiBtnFocus === 1 ? 'bg-luxury-orange text-white scale-[1.02] shadow-luxury-orange/20' : 'bg-luxury-orange text-white'}`}
+                  className={`flex-1 h-12 rounded-xl uppercase text-[10px] font-bold tracking-[0.1em] transition-all outline-none shadow-lg
+                    ${eiField === 'btns' && eiBtnFocus === 1 
+                      ? 'bg-luxury-orange text-white ring-2 ring-white/50 shadow-luxury-orange/30 scale-[1.02]' 
+                      : 'bg-luxury-orange text-white opacity-90'}`}
                 >
                   Gravar Alteração
                 </button>
@@ -3340,9 +3363,9 @@ function TelaArquivados({ db }: { db: any }) {
                   <div className="flex-1 overflow-auto">
                     {itens.length === 0 && <p className="text-center text-white/30 text-sm py-6">Nenhuma compra</p>}
                     {itens.map((item: any, i) => (
-                      <div key={i} className="flex items-center gap-3 px-4 py-2 border-b border-white/5 text-sm">
-                        <span className="font-mono text-white/40 w-24 shrink-0">{isoToBr(item.data_venda || '')}</span>
-                        <span className="flex-1 text-white font-semibold truncate">{item.produto_nome || 'Produto'}</span>
+                      <div key={i} className="flex items-center gap-3 px-4 py-2 border-b border-white/5 text-sm hover:bg-white/[0.02] transition-colors">
+                        <span className="font-mono text-white/40 w-28 shrink-0 text-xs">{isoToBr(item.data_venda || '')}</span>
+                        <span className="flex-1 text-white font-semibold truncate uppercase">{item.produto_nome || 'Produto'}</span>
                         <span className="text-white/40 w-8 text-right shrink-0">{item.quantidade || 0}x</span>
                         <span className="text-luxury-orange font-black w-24 text-right font-mono shrink-0">
                           R$ {fmtBRL(item.valor_total || 0)}
