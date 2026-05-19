@@ -252,20 +252,21 @@ export default function Configuracoes() {
   };
 
   return (
-    <div className="space-y-8 h-full flex flex-col">
+    <div className="h-full min-h-0 flex flex-col">
       <header>
         <h2 className="text-3xl font-black italic uppercase tracking-tighter text-white">Configurações do <span className="text-luxury-orange">Sistema</span></h2>
         <p className="text-white/40">Gerencie alertas, backups e dados da loja.</p>
       </header>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-        <div className="glass-card p-8 space-y-8">
+      <div className="mt-8 min-h-0 flex-1 overflow-y-auto pr-2">
+        <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 items-start">
+        <div className="glass-card p-6 space-y-6">
           <div className="flex items-center gap-3 border-b border-white/5 pb-4">
             <Lock className="text-luxury-orange" size={24} />
             <h3 className="text-xl font-bold uppercase italic tracking-tight">Segurança & Loja</h3>
           </div>
 
-          <div className="space-y-6">
+          <div className="space-y-5">
             <label className="block">
               <span className="text-xs uppercase tracking-widest text-white/40 font-bold mb-2 block">Nome da Loja / Unidade</span>
               <input 
@@ -279,7 +280,7 @@ export default function Configuracoes() {
               />
             </label>
 
-            <div className="pt-4 border-t border-white/5">
+            <div className="pt-3 border-t border-white/5">
               <label className="block">
                 <div className="flex justify-between items-end mb-2">
                   <span className="text-xs uppercase tracking-widest text-white/40 font-bold block">Senha de Acesso (Outras áreas)</span>
@@ -310,13 +311,13 @@ export default function Configuracoes() {
           </div>
         </div>
 
-        <div className="glass-card p-8 space-y-8">
+        <div className="glass-card p-6 space-y-6">
           <div className="flex items-center gap-3 border-b border-white/5 pb-4">
             <Database className="text-luxury-orange" size={24} />
             <h3 className="text-xl font-bold uppercase italic tracking-tight">Backup & Segurança</h3>
           </div>
 
-          <div className="space-y-6">
+          <div className="space-y-5">
             <label className="block">
               <span className="text-xs uppercase tracking-widest text-white/40 font-bold mb-2 block flex items-center gap-2">
                 <Folder size={14} /> Caminho de Backup Externo (Pasta Cloud/Google Drive)
@@ -363,8 +364,8 @@ export default function Configuracoes() {
               )}
             </label>
 
-            <div className="pt-4 border-t border-white/5 space-y-4">
-              <div className="rounded-2xl border border-white/5 bg-white/[0.03] p-4 space-y-4">
+            <div className="pt-3 border-t border-white/5 space-y-4">
+              <div className="rounded-2xl border border-white/5 bg-white/[0.03] p-4 space-y-3.5">
                 <div>
                   <p className="text-xs uppercase tracking-widest text-white/40 font-bold">Impressao de Venda</p>
                   <p className="text-[10px] text-white/20 mt-1 italic">Essas opcoes valem apenas para a impressao automatica ao concluir a venda.</p>
@@ -446,9 +447,10 @@ export default function Configuracoes() {
             </div>
           </div>
         </div>
+        </div>
       </div>
 
-      <div className="mt-auto flex justify-end">
+      <div className="pt-6 flex justify-end">
         <button 
           ref={fSalvarBtnRef}
           onClick={handleSave}

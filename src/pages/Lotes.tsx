@@ -5,6 +5,11 @@ import Modal from "../components/Modal";
 import { cn } from "../utils/cn";
 import { normalizeText } from "../utils/text";
 import { handleCurrencyInput, handleWeightInput, finalizeWeightInput, parseCurrencyToNumber } from "../utils/currency";
+import {
+  getProducaoEditMinimumQuantity,
+  getProducaoNextFocusKey,
+  getProducaoMinimumQuantityMessage,
+} from "./producaoActions";
 
 let producaoShouldFocusOnMount = false;
 export const setProducaoShouldFocusOnMount = (val: boolean) => { producaoShouldFocusOnMount = val; };
@@ -16,6 +21,7 @@ interface Producao {
   data_producao: string;
   qtd_produzida: number;
   qtd_vendida: number;
+  qtd_vendida_lote: number;
   sobra: number;
 }
 
@@ -52,6 +58,7 @@ function DateInput({ value, onChange, label, externalRef, highlighted, active, o
   const localRef = useRef<HTMLInputElement>(null);
   const inputRef = externalRef || localRef;
   const displayValue = value || '__/__/____';
+  const getSelectionEnd = () => displayValue.includes('_') ? displayValue.indexOf('_') : displayValue.length;
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     const input = e.currentTarget;
@@ -86,14 +93,18 @@ function DateInput({ value, onChange, label, externalRef, highlighted, active, o
       setTimeout(() => input.setSelectionRange(nextDisp, nextDisp), 0);
       return;
     }
-    if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Tab', 'Enter', 'Escape'].includes(e.key)) return;
+    if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(e.key)) {
+      e.preventDefault();
+      return;
+    }
+    if (['Tab', 'Enter', 'Escape'].includes(e.key)) return;
     e.preventDefault();
   };
 
   return (
     <div className="flex flex-col">
       {label && <label className="block text-[10px] uppercase tracking-[0.2em] text-white/30 font-bold mb-1.5">{label}</label>}
-      <input id={id} ref={inputRef} type="text" className={`luxury-input h-14 font-mono text-center tracking-widest w-full ${active ? 'border-luxury-orange ring-2 ring-luxury-orange/40 bg-luxury-orange/5' : highlighted ? 'bg-white/5' : ''}`} value={displayValue} onChange={() => {}} onFocus={e => { e.currentTarget.setSelectionRange(0, 0); onFocus?.(); }} onBlur={e => e.currentTarget.setSelectionRange(0, 0)} onKeyDown={e => { handleKeyDown(e); onKeyDown?.(e); }} placeholder="__/__/____" />
+      <input id={id} ref={inputRef} type="text" className={`luxury-input h-14 font-mono text-center tracking-widest w-full ${active ? 'border-luxury-orange ring-2 ring-luxury-orange/40 bg-luxury-orange/5' : highlighted ? 'bg-white/5' : ''}`} value={displayValue} onChange={() => {}} onFocus={e => { const end = getSelectionEnd(); e.currentTarget.setSelectionRange(end, end); onFocus?.(); }} onBlur={e => { const end = getSelectionEnd(); e.currentTarget.setSelectionRange(end, end); }} onKeyDown={e => { handleKeyDown(e); onKeyDown?.(e); }} placeholder="__/__/____" />
     </div>
   );
 }
@@ -133,7 +144,11 @@ function TimeInput({ value, onChange, label, onKeyDown, id }: { value: string; o
       setTimeout(() => input.setSelectionRange(nextDisp, nextDisp), 0);
       return;
     }
-    if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Tab', 'Enter', 'Escape'].includes(e.key)) return;
+    if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(e.key)) {
+      e.preventDefault();
+      return;
+    }
+    if (['Tab', 'Enter', 'Escape'].includes(e.key)) return;
     e.preventDefault();
   };
 
@@ -154,7 +169,7 @@ export default function ProducaoPage() {
   const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({});
   const [selectedDate, setSelectedDate] = useState(new Date().toLocaleDateString('sv-SE'));
   const [activeId, setActiveId] = useState<string | null>(null);
-  const [inputActive, _setInputActive] = useState(false);
+  const [inputActive, setInputActive] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedProd, setSelectedProd] = useState<Produto | null>(null);
   const [showResults, setShowResults] = useState(false);
@@ -164,10 +179,49 @@ export default function ProducaoPage() {
   const [quickForm, setQuickForm] = useState({ v: "0,00", c: "0,00" });
   const [editItem, setEditItem] = useState<Producao | null>(null);
   const [editForm, setEditForm] = useState({ produzido: "", data: "", hora: "" });
-  const lastFocusedRef = useRef<HTMLElement | null>(null);
-  const wasAnyModalOpen = useRef(false);
+  const [editMinProduzido, setEditMinProduzido] = useState(0);
+  const [actionTarget, setActionTarget] = useState<{ lote: Producao; minimo: number } | null>(null);
+  const lastFocusedKeyRef = useRef<string | null>(null);
 
   const filteredSuggestions = produtos.filter(p => normalizeText(p.nome).includes(normalizeText(searchTerm))).slice(0, 3);
+
+  useEffect(() => {
+    if (showResults && searchTerm.length > 0 && !selectedProd && filteredSuggestions.length > 0) {
+      setActiveSuggestionIdx(0);
+      return;
+    }
+
+    setActiveSuggestionIdx(-1);
+  }, [showResults, searchTerm, selectedProd, filteredSuggestions.length]);
+  const focusSidebar = () => {
+    const sidebarLink = document.querySelector('aside nav a[class*="bg-luxury-orange"]') as HTMLElement | null;
+    sidebarLink?.focus();
+  };
+
+  const captureCurrentFocusKey = () => {
+    const active = document.activeElement as HTMLElement | null;
+    const currentFocusKey = active?.dataset.focusKey || active?.id || null;
+    lastFocusedKeyRef.current = getProducaoNextFocusKey(
+      currentFocusKey,
+      lastFocusedKeyRef.current
+    );
+  };
+
+  const restoreLastFocus = () => {
+    const focusKey = lastFocusedKeyRef.current;
+    if (!focusKey) return;
+
+    requestAnimationFrame(() => {
+      setTimeout(() => {
+        const target =
+          (Array.from(document.querySelectorAll<HTMLElement>("[data-focus-key]")).find(
+            (element) => element.dataset.focusKey === focusKey
+          ) as HTMLElement | undefined) ||
+          (document.getElementById(focusKey) as HTMLElement | null);
+        target?.focus();
+      }, 60);
+    });
+  };
 
   const openModal = () => { setIsModalOpen(true); };
   const closeModal = () => { 
@@ -184,13 +238,13 @@ export default function ProducaoPage() {
     try {
       const prodRes: any[] = await db.select("SELECT id, nome FROM produtos WHERE ativo = 1 ORDER BY nome ASC");
       setProdutos(prodRes);
-      const producoesRes: any[] = await db.select(`SELECT l.id, l.produto_id, COALESCE(p.nome, l.produto_avulso_nome) as produto_nome, l.data_fabricacao as data_producao, l.qtd_inicial as qtd_produzida FROM lotes l LEFT JOIN produtos p ON l.produto_id = p.id WHERE date(l.data_fabricacao) = date($1) ORDER BY l.id DESC`, [selectedDate]);
+      const producoesRes: any[] = await db.select(`SELECT l.id, l.produto_id, COALESCE(p.nome, l.produto_avulso_nome) as produto_nome, l.data_fabricacao as data_producao, l.qtd_inicial as qtd_produzida, COALESCE(l.qtd_vendida, 0) as qtd_vendida_lote FROM lotes l LEFT JOIN produtos p ON l.produto_id = p.id WHERE date(l.data_fabricacao) = date($1) ORDER BY l.id DESC`, [selectedDate]);
       const vendasRes: any[] = await db.select(`SELECT vi.produto_id, SUM(vi.quantidade) as total_vendido FROM venda_itens vi JOIN vendas v ON v.id = vi.venda_id WHERE date(v.data_venda) = date($1) GROUP BY vi.produto_id`, [selectedDate]);
       const vendasMap: Record<number, number> = {};
       vendasRes.forEach(v => { if (v.produto_id) vendasMap[v.produto_id] = v.total_vendido; });
       const finalData = producoesRes.map(p => {
         const totalVendidoDia = p.produto_id ? (vendasMap[p.produto_id] || 0) : 0;
-        return { id: p.id, produto_id: p.produto_id, produto_nome: p.produto_nome, data_producao: p.data_producao, qtd_produzida: p.qtd_produzida, qtd_vendida: totalVendidoDia, sobra: p.qtd_produzida - totalVendidoDia };
+        return { id: p.id, produto_id: p.produto_id, produto_nome: p.produto_nome, data_producao: p.data_producao, qtd_produzida: p.qtd_produzida, qtd_vendida: totalVendidoDia, qtd_vendida_lote: p.qtd_vendida_lote, sobra: p.qtd_produzida - totalVendidoDia };
       });
       setProducoes(finalData);
     } catch (err) { console.error(err); }
@@ -198,16 +252,9 @@ export default function ProducaoPage() {
 
   useEffect(() => { loadData(); }, [db, selectedDate]);
 
-  // Track modal state for focus return
-  useEffect(() => {
-    if (isModalOpen || !!editItem || isQuickAddMode) {
-      wasAnyModalOpen.current = true;
-    }
-  }, [isModalOpen, editItem, isQuickAddMode]);
-
   // Initial Focus Logic
   useEffect(() => {
-    if (db && !isModalOpen && !editItem && !isQuickAddMode) {
+    if (db && !isModalOpen && !editItem && !isQuickAddMode && !actionTarget) {
       setTimeout(() => {
         // Se for a montagem inicial via menu, segue a regra inteligente
         if (producaoShouldFocusOnMount) {
@@ -218,29 +265,59 @@ export default function ProducaoPage() {
             document.getElementById('btn-registrar')?.focus();
           }
           setProducaoShouldFocusOnMount(false);
-          wasAnyModalOpen.current = false;
-          return;
-        }
-
-        // Se estiver apenas fechando um modal, volta para o botão de registrar
-        if (wasAnyModalOpen.current) {
-          document.getElementById('btn-registrar')?.focus();
-          wasAnyModalOpen.current = false;
         }
       }, 150);
     }
-  }, [db, isModalOpen, editItem, isQuickAddMode]);
+  }, [db, isModalOpen, editItem, isQuickAddMode, actionTarget]);
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       const active = document.activeElement as HTMLElement;
       setActiveId(active?.id || null);
-      if (!active || isModalOpen || editItem || isQuickAddMode) return;
+      if (!active || isModalOpen || editItem || isQuickAddMode || actionTarget) return;
+
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        setInputActive(false);
+        setActiveId(null);
+        active.blur();
+        focusSidebar();
+        return;
+      }
+
+      if (e.key === 'Enter' && active.id !== 'header-date-input' && active.id !== 'btn-registrar') {
+        e.preventDefault();
+        setInputActive(false);
+        document.getElementById('header-date-input')?.focus();
+        return;
+      }
       
       if (active.id === 'btn-registrar') {
+        if (e.key === 'Enter') { e.preventDefault(); openModal(); }
         if (e.key === 'ArrowDown') { e.preventDefault(); (document.querySelector('tbody tr[tabindex="0"]') as HTMLElement)?.focus(); }
-        if (e.key === 'ArrowLeft') { e.preventDefault(); document.getElementById('header-date-input')?.focus(); }
+        if (e.key === 'ArrowLeft') { e.preventDefault(); setInputActive(false); document.getElementById('header-date-input')?.focus(); }
       } else if (active.id === 'header-date-input') {
+        if (/^\d$/.test(e.key) || e.key === 'Backspace') {
+          if (!inputActive) setInputActive(true);
+          return;
+        }
+
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          if (!inputActive) {
+            setInputActive(true);
+            setTimeout(() => {
+              const input = document.getElementById('header-date-input') as HTMLInputElement | null;
+              input?.focus();
+              const end = input?.value.includes('_') ? input.value.indexOf('_') : input?.value.length ?? 0;
+              input?.setSelectionRange(end, end);
+            }, 0);
+          } else {
+            setInputActive(false);
+          }
+          return;
+        }
+
         if (inputActive) return;
         if (e.key === 'ArrowDown') { e.preventDefault(); (document.querySelector('tbody tr[tabindex="0"]') as HTMLElement)?.focus(); }
         if (e.key === 'ArrowRight') { e.preventDefault(); document.getElementById('btn-registrar')?.focus(); }
@@ -248,9 +325,10 @@ export default function ProducaoPage() {
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [isModalOpen, editItem, isQuickAddMode, inputActive]);
+  }, [isModalOpen, editItem, isQuickAddMode, inputActive, actionTarget]);
 
   const [form, setForm] = useState({ produzido: "", data: isoToBr(selectedDate), hora: getCurrentTime() });
+  const isFormReady = Boolean(searchTerm.trim()) && Boolean(form.produzido.trim()) && !form.data.includes('_') && !form.hora.includes('_');
 
   useEffect(() => {
     if (isModalOpen) {
@@ -263,7 +341,7 @@ export default function ProducaoPage() {
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!db) return;
-    if (!searchTerm || !form.produzido) return;
+    if (!isFormReady) return;
     try {
       const parts = form.data.split('/');
       const isoDate = `${parts[2]}-${parts[1]}-${parts[0]}`;
@@ -283,13 +361,29 @@ export default function ProducaoPage() {
     } catch (err) { console.error(err); }
   };
 
-  const openEdit = (item: any) => { lastFocusedRef.current = document.activeElement as HTMLElement; setEditItem(item); setEditForm({ produzido: item.qtd_produzida.toString(), data: isoToBr(item.data_producao), hora: isoToTime(item.data_producao) }); };
-  const closeEdit = () => { setEditItem(null); setTimeout(() => lastFocusedRef.current?.focus(), 50); };
+  const openEdit = (item: Producao, totalVendidoDia: number, lotesDoProduto: Producao[]) => {
+    captureCurrentFocusKey();
+    setEditItem(item);
+    setEditMinProduzido(getProducaoEditMinimumQuantity(item.id, totalVendidoDia, lotesDoProduto));
+    setEditForm({ produzido: item.qtd_produzida.toString(), data: isoToBr(item.data_producao), hora: isoToTime(item.data_producao) });
+  };
+  const closeEdit = () => {
+    setEditItem(null);
+    restoreLastFocus();
+  };
   const saveEdit = async (e: React.FormEvent) => {
     e.preventDefault(); if (!editItem || !db) return;
+    const novaQuantidade = parseInt(editForm.produzido) || 0;
+    if (novaQuantidade < editMinProduzido) {
+      alert(`A quantidade nao pode ser menor que ${editMinProduzido}, pois isso ja foi vendido no dia.`);
+      document.getElementById('edit-produzido')?.focus();
+      return;
+    }
     const parts = editForm.data.split('/'); const isoDate = `${parts[2]}-${parts[1]}-${parts[0]}`; const isoDateTime = `${isoDate} ${editForm.hora}:00`;
-    await db.execute("UPDATE lotes SET qtd_inicial=$1, data_fabricacao=$2 WHERE id=$3", [parseInt(editForm.produzido), isoDateTime, editItem.id]);
-    closeEdit(); loadData();
+    await db.execute("UPDATE lotes SET qtd_inicial=$1, qtd_atual=$2, data_fabricacao=$3 WHERE id=$4", [novaQuantidade, Math.max(0, novaQuantidade - (editItem.qtd_vendida_lote || 0)), isoDateTime, editItem.id]);
+    setEditItem(null);
+    await loadData();
+    restoreLastFocus();
   };
 
   const deleteItem = async (id: number) => { if (!db) return; await db.execute("DELETE FROM lotes WHERE id = $1", [id]); setItemToDelete(null); loadData(); };
@@ -305,6 +399,28 @@ export default function ProducaoPage() {
     return acc;
   }, {} as any);
 
+  const openActionPopup = (lote: Producao, totalVendidoDia: number, lotesDoProduto: Producao[]) => {
+    captureCurrentFocusKey();
+    setActionTarget({
+      lote,
+      minimo: getProducaoEditMinimumQuantity(lote.id, totalVendidoDia, lotesDoProduto),
+    });
+  };
+
+  const closeActionPopup = () => {
+    setActionTarget(null);
+    restoreLastFocus();
+  };
+
+  const handleActionEdit = () => {
+    if (!actionTarget) return;
+    const group = Object.values(groupedProducoes).find((item: any) =>
+      item.lotes.some((lote: Producao) => lote.id === actionTarget.lote.id)
+    ) as any;
+    setActionTarget(null);
+    openEdit(actionTarget.lote, group?.total_vendido || 0, group?.lotes || [actionTarget.lote]);
+  };
+
   return (
     <div className="space-y-6 h-full flex flex-col">
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 mb-8">
@@ -316,9 +432,16 @@ export default function ProducaoPage() {
           <p className="text-white/40 font-bold ml-13 text-sm tracking-widest">Gestão diária de fabricação e vendas.</p>
         </div>
         <div className="flex items-end gap-4">
-          <DateInput id="header-date-input" label="Data da Produção" value={isoToBr(selectedDate)} onChange={v => { if (!v.includes('_')) { const iso = brToIso(v); if (iso) setSelectedDate(iso); } }} highlighted={activeId === 'header-date-input'} active={inputActive} onFocus={() => setActiveId('header-date-input')} />
-          <button id="btn-registrar" onClick={openModal} className="btn-primary h-14 px-8 flex items-center gap-3 transition-all outline-none focus:ring-2 focus:ring-white/20 focus:shadow-[0_0_15px_rgba(255,107,0,0.2)] border border-transparent focus:border-white/20 transition-all"><Plus size={20} /><span>Registrar Produção</span></button>
+          <DateInput id="header-date-input" label="Data da Produção" value={isoToBr(selectedDate)} onChange={v => { if (!v.includes('_')) { const iso = brToIso(v); if (iso) setSelectedDate(iso); } }} highlighted={activeId === 'header-date-input'} active={inputActive} onFocus={() => { setActiveId('header-date-input'); setInputActive(false); }} />
+          <button id="btn-registrar" onFocus={() => { setActiveId('btn-registrar'); setInputActive(false); }} onClick={openModal} className="btn-primary h-14 px-8 flex items-center gap-3 transition-all outline-none focus:ring-2 focus:ring-white/20 focus:shadow-[0_0_15px_rgba(255,107,0,0.2)] border border-transparent focus:border-white/20 transition-all"><Plus size={20} /><span>Registrar Produção</span></button>
         </div>
+      </div>
+
+      <div className="glass-card px-4 py-2 flex gap-6 text-xs font-bold text-white/40">
+        <span><span className="text-luxury-orange">F1</span> = Ação</span>
+        <span><span className="text-luxury-orange">ENTER</span> = Expandir</span>
+        <span><span className="text-luxury-orange">↑↓</span> = Navegar</span>
+        <span><span className="text-luxury-orange">ESC</span> = Sair</span>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-10 opacity-60">
@@ -362,10 +485,24 @@ export default function ProducaoPage() {
           <tbody className="divide-y divide-white/5">
             {Object.values(groupedProducoes).map((group: any) => (
               <Fragment key={group.produto_nome}>
-                <tr tabIndex={0} onClick={() => setExpandedGroups(prev => ({...prev, [group.produto_nome]: !prev[group.produto_nome]}))} 
+                <tr tabIndex={0} data-focus-key={`group-row-${group.produto_nome}`} onClick={() => setExpandedGroups(prev => ({...prev, [group.produto_nome]: !prev[group.produto_nome]}))} 
                   onKeyDown={e => {
                     if (e.target !== e.currentTarget) return;
-                    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setExpandedGroups(prev => ({ ...prev, [group.produto_nome]: !prev[group.produto_nome] })); }
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
+                      const focusKey = e.currentTarget.dataset.focusKey;
+                      setExpandedGroups(prev => ({ ...prev, [group.produto_nome]: !prev[group.produto_nome] }));
+                      requestAnimationFrame(() => {
+                        setTimeout(() => {
+                          if (!focusKey) return;
+                          const row = Array.from(document.querySelectorAll<HTMLElement>("[data-focus-key]")).find(
+                            (element) => element.dataset.focusKey === focusKey
+                          );
+                          row?.focus();
+                        }, 0);
+                      });
+                    }
+                    else if (e.key === 'F1' && group.lotes.length > 0) { e.preventDefault(); openActionPopup(group.lotes[0], group.total_vendido, group.lotes); }
                     else if (e.key === 'ArrowUp') { e.preventDefault(); const p = e.currentTarget.previousElementSibling as HTMLElement; if (p) p.focus(); else document.getElementById('btn-registrar')?.focus(); }
                     else if (e.key === 'ArrowDown') { e.preventDefault(); (e.currentTarget.nextElementSibling as HTMLElement)?.focus(); }
                   }}
@@ -382,11 +519,12 @@ export default function ProducaoPage() {
                   <td className="px-6 py-5 text-right pr-10 uppercase text-[10px] font-black text-white/20 tracking-widest">Resumo do Dia</td>
                 </tr>
                 {expandedGroups[group.produto_nome] && group.lotes.map((lote: any) => (
-                  <tr key={lote.id} tabIndex={0}
+                  <tr key={lote.id} tabIndex={0} data-focus-key={`lote-row-${lote.id}`}
                     onKeyDown={e => {
                       if (e.target !== e.currentTarget) return;
                       if (e.key === 'ArrowUp') { e.preventDefault(); (e.currentTarget.previousElementSibling as HTMLElement)?.focus(); }
                       else if (e.key === 'ArrowDown') { e.preventDefault(); (e.currentTarget.nextElementSibling as HTMLElement)?.focus(); }
+                      else if (e.key === 'F1') { e.preventDefault(); openActionPopup(lote, group.total_vendido, group.lotes); }
                       else if (e.key === 'Enter') { e.preventDefault(); document.getElementById(`btn-edit-${lote.id}`)?.focus(); }
                     }}
                     className="bg-black/40 border-b border-white/[0.02] group/child outline-none focus-within:bg-luxury-orange/10">
@@ -396,13 +534,13 @@ export default function ProducaoPage() {
                     <td className="px-6 py-3 text-center text-sm font-bold text-red-500/60 italic">-</td>
                     <td className="px-6 py-3 text-right pr-10">
                       <div className="flex justify-end gap-2 opacity-0 group-hover/child:opacity-100 group-focus-within/child:opacity-100 transition-all">
-                        <button id={`btn-edit-${lote.id}`} onClick={() => openEdit(lote)}
+                        <button id={`btn-edit-${lote.id}`} data-focus-key={`btn-edit-${lote.id}`} onClick={() => openEdit(lote, group.total_vendido, group.lotes)}
                           onKeyDown={e => {
                             if (e.key === 'ArrowRight') { e.preventDefault(); document.getElementById(`btn-delete-${lote.id}`)?.focus(); }
                             else if (e.key === 'Escape') { e.preventDefault(); (e.currentTarget.closest('tr') as HTMLElement)?.focus(); }
                           }}
                           className="p-2 rounded-lg hover:bg-white/10 text-white/20 focus:text-luxury-orange outline-none"><Edit2 size={14} /></button>
-                        <button id={`btn-delete-${lote.id}`} onClick={() => setItemToDelete(lote)}
+                        <button id={`btn-delete-${lote.id}`} data-focus-key={`btn-delete-${lote.id}`} onClick={() => setItemToDelete(lote)}
                           onKeyDown={e => {
                             if (e.key === 'ArrowLeft') { e.preventDefault(); document.getElementById(`btn-edit-${lote.id}`)?.focus(); }
                             else if (e.key === 'Escape') { e.preventDefault(); (e.currentTarget.closest('tr') as HTMLElement)?.focus(); }
@@ -429,12 +567,15 @@ export default function ProducaoPage() {
                   if (e.key === 'ArrowDown') { 
                     e.preventDefault(); 
                     if (showResults && filteredSuggestions.length > 0 && !selectedProd) {
-                      setActiveSuggestionIdx(p => (p + 1) % (filteredSuggestions.length + 1));
+                      setActiveSuggestionIdx(prev => prev < filteredSuggestions.length - 1 ? prev + 1 : 0);
                     } else {
                       document.getElementById('input-produzido')?.focus();
                     }
                   }
-                  else if (e.key === 'ArrowUp' && showResults && !selectedProd) { e.preventDefault(); setActiveSuggestionIdx(p => (p - 1 + (filteredSuggestions.length + 1)) % (filteredSuggestions.length + 1)); }
+                  else if (e.key === 'ArrowUp' && showResults && !selectedProd && filteredSuggestions.length > 0) {
+                    e.preventDefault();
+                    setActiveSuggestionIdx(prev => prev > 0 ? prev - 1 : filteredSuggestions.length - 1);
+                  }
                   else if (e.key === 'ArrowUp') { e.preventDefault(); }
                   else if (e.key === 'Enter') { 
                     e.preventDefault(); 
@@ -445,8 +586,6 @@ export default function ProducaoPage() {
                         setSearchTerm(p.nome.toUpperCase()); 
                         setShowResults(false); 
                         setTimeout(() => document.getElementById('input-produzido')?.focus(), 50); 
-                      } else {
-                        setIsQuickAddMode(true); 
                       }
                     } else {
                       document.getElementById('input-produzido')?.focus(); 
@@ -466,15 +605,15 @@ export default function ProducaoPage() {
           </div>
           <div>
             <label className="block text-xs uppercase font-black text-white/40 mb-2 tracking-widest">Qtd Produzida</label>
-            <input id="input-produzido" type="number" className="luxury-input w-full h-12 text-xl font-black italic" value={form.produzido} onChange={e => setForm({...form, produzido: e.target.value})} onKeyDown={e => { if (e.key === 'ArrowDown' || e.key === 'Enter') { e.preventDefault(); document.getElementById('date-input')?.focus(); } else if (e.key === 'ArrowUp') { e.preventDefault(); searchInputRef.current?.focus(); } }} />
+            <input id="input-produzido" type="number" className="luxury-input w-full h-12 text-xl font-black italic" value={form.produzido} onChange={e => setForm({...form, produzido: e.target.value})} onKeyDown={e => { if (e.key === 'ArrowDown' || e.key === 'Enter') { e.preventDefault(); document.getElementById('date-input')?.focus(); } else if (e.key === 'ArrowUp') { e.preventDefault(); searchInputRef.current?.focus(); } else if (e.key === 'ArrowLeft') { e.preventDefault(); searchInputRef.current?.focus(); } }} />
           </div>
           <div className="grid grid-cols-2 gap-4">
-            <DateInput id="date-input" label="Data da Produção" value={form.data} onChange={v => setForm({...form, data: v})} onKeyDown={e => { if (e.key === 'ArrowDown' || e.key === 'Enter') { e.preventDefault(); document.getElementById('btn-confirm')?.focus(); } else if (e.key === 'ArrowUp') { e.preventDefault(); document.getElementById('input-produzido')?.focus(); } else if (e.key === 'ArrowRight') { e.preventDefault(); document.getElementById('time-input')?.focus(); } }} />
+            <DateInput id="date-input" label="Data da Produção" value={form.data} onChange={v => setForm({...form, data: v})} onKeyDown={e => { if (e.key === 'ArrowDown' || e.key === 'Enter') { e.preventDefault(); document.getElementById('btn-confirm')?.focus(); } else if (e.key === 'ArrowUp') { e.preventDefault(); document.getElementById('input-produzido')?.focus(); } else if (e.key === 'ArrowRight') { e.preventDefault(); document.getElementById('time-input')?.focus(); } else if (e.key === 'ArrowLeft') { e.preventDefault(); document.getElementById('input-produzido')?.focus(); } }} />
             <TimeInput id="time-input" label="Hora" value={form.hora} onChange={v => setForm({...form, hora: v})} onKeyDown={e => { if (e.key === 'ArrowUp') { e.preventDefault(); document.getElementById('input-produzido')?.focus(); } else if (e.key === 'ArrowLeft') { e.preventDefault(); document.getElementById('date-input')?.focus(); } else if (e.key === 'ArrowDown' || e.key === 'Enter') { e.preventDefault(); document.getElementById('btn-confirm')?.focus(); } }} />
           </div>
           <div className="flex gap-4 pt-4">
             <button id="btn-cancel" type="button" onClick={closeModal} className="flex-1 h-14 border border-white/10 rounded-xl font-bold uppercase text-[10px] tracking-widest outline-none focus:bg-red-500/10 transition-all" onKeyDown={e => { if (e.key === 'ArrowRight') { e.preventDefault(); document.getElementById('btn-confirm')?.focus(); } else if (e.key === 'ArrowUp') { e.preventDefault(); document.getElementById('date-input')?.focus(); } }}>CANCELAR</button>
-            <button id="btn-confirm" type="submit" className="btn-primary flex-1 h-14 font-black italic uppercase tracking-widest outline-none focus:ring-2 focus:ring-white/20 focus:shadow-[0_0_15px_rgba(255,107,0,0.2)] border border-transparent focus:border-white/20 transition-all" onKeyDown={e => { if (e.key === 'ArrowUp') { e.preventDefault(); document.getElementById('date-input')?.focus(); } else if (e.key === 'ArrowLeft') { e.preventDefault(); document.getElementById('btn-cancel')?.focus(); } }}>CONFIRMAR LANÇAMENTO</button>
+            <button id="btn-confirm" type="submit" disabled={!isFormReady} className="btn-primary flex-1 h-14 font-black italic uppercase tracking-widest outline-none focus:ring-2 focus:ring-white/20 focus:shadow-[0_0_15px_rgba(255,107,0,0.2)] border border-transparent focus:border-white/20 transition-all disabled:opacity-40 disabled:cursor-not-allowed" onKeyDown={e => { if (e.key === 'ArrowUp') { e.preventDefault(); document.getElementById('time-input')?.focus(); } else if (e.key === 'ArrowLeft') { e.preventDefault(); document.getElementById('btn-cancel')?.focus(); } else if (e.key === 'ArrowRight') { e.preventDefault(); document.getElementById('btn-cancel')?.focus(); } else if (e.key === 'Enter' && !isFormReady) { e.preventDefault(); } }}>CONFIRMAR LANÇAMENTO</button>
           </div>
         </form>
       </Modal>
@@ -512,13 +651,54 @@ export default function ProducaoPage() {
         </div>
       </Modal>
 
+      <Modal isOpen={!!actionTarget} onClose={closeActionPopup} title="AÇÃO DO LANÇAMENTO">
+        {actionTarget && (
+          <div className="space-y-4">
+            <button
+              autoFocus
+              type="button"
+              onClick={handleActionEdit}
+              onKeyDown={e => {
+                if (e.key === 'Enter') { e.preventDefault(); handleActionEdit(); }
+                if (e.key === 'Escape') { e.preventDefault(); closeActionPopup(); }
+              }}
+              className="w-full h-14 rounded-xl border border-luxury-orange/30 bg-luxury-orange/10 text-left px-4 transition-all outline-none ring-2 ring-luxury-orange/30"
+            >
+              <p className="font-bold uppercase text-sm text-white">Editar lançamento</p>
+              <p className="text-xs text-white/40">Quantidade minima permitida: {actionTarget.minimo}</p>
+            </button>
+          </div>
+        )}
+      </Modal>
+
       <Modal isOpen={!!editItem} onClose={closeEdit} title="EDITAR LANÇAMENTO">
         {editItem && (
           <form onSubmit={saveEdit} className="space-y-6">
             <div className="p-4 rounded-xl bg-luxury-orange/10 border border-luxury-orange/20"><p className="text-xl font-black italic uppercase text-white tracking-tighter">{editItem.produto_nome}</p></div>
             <div className="space-y-2">
               <label className="text-[10px] uppercase font-black text-white/20">Qtd Produzida</label>
-              <input id="edit-produzido" type="number" autoFocus className="luxury-input w-full h-12 text-xl font-black italic" value={editForm.produzido} onChange={e => setEditForm({...editForm, produzido: e.target.value})} onKeyDown={e => { if (e.key === 'ArrowDown' || e.key === 'Enter') { e.preventDefault(); document.getElementById('edit-data')?.focus(); } }} />
+              <input
+                id="edit-produzido"
+                type="number"
+                min={editMinProduzido}
+                autoFocus
+                className="luxury-input w-full h-12 text-xl font-black italic"
+                value={editForm.produzido}
+                onChange={e => {
+                  e.currentTarget.setCustomValidity("");
+                  setEditForm({...editForm, produzido: e.target.value});
+                }}
+                onInvalid={e => {
+                  e.currentTarget.setCustomValidity(
+                    getProducaoMinimumQuantityMessage(editMinProduzido)
+                  );
+                }}
+                onInput={e => {
+                  e.currentTarget.setCustomValidity("");
+                }}
+                onKeyDown={e => { if (e.key === 'ArrowDown' || e.key === 'Enter') { e.preventDefault(); document.getElementById('edit-data')?.focus(); } }}
+              />
+              <p className="text-[10px] text-white/30 italic">Minimo permitido: {editMinProduzido}</p>
             </div>
             <div className="grid grid-cols-2 gap-4">
               <DateInput id="edit-data" value={editForm.data} onChange={v => setEditForm({...editForm, data: v})} onKeyDown={e => { if (e.key === 'ArrowDown' || e.key === 'Enter') { e.preventDefault(); document.getElementById('edit-hora')?.focus(); } else if (e.key === 'ArrowUp') { e.preventDefault(); document.getElementById('edit-produzido')?.focus(); } }} />

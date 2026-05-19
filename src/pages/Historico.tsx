@@ -5,6 +5,7 @@ import { useDatabase } from "../hooks/useDatabase";
 import Modal from "../components/Modal";
 import { formatCurrency } from "../utils/currency";
 import { buildHistoricoPrintText, getHistoricoActionMeta, getHistoricoActions, getHistoricoDeleteConfirmText, getNextHistoricoAction } from "./historicoActions";
+import { buildHistoricoDeletePlan } from "./historicoDeleteFlow";
 
 interface Venda {
   id: number;
@@ -212,6 +213,7 @@ export default function Historico() {
   const [deleteTarget, setDeleteTarget] = useState<HistoricoActionTarget | null>(null);
   const [actionBusy, setActionBusy] = useState<"print" | "delete" | null>(null);
   const [selectedAction, setSelectedAction] = useState<"imprimir" | "excluir">("imprimir");
+  const [selectedDeleteAction, setSelectedDeleteAction] = useState<"cancelar" | "excluir">("excluir");
   const [printToast, setPrintToast] = useState<string | null>(null);
   const [printToastLeaving, setPrintToastLeaving] = useState(false);
 
@@ -229,6 +231,8 @@ export default function Historico() {
   const rowRefs = useRef<(HTMLElement | null)[]>([]);
   const printActionRef = useRef<HTMLButtonElement>(null);
   const deleteActionRef = useRef<HTMLButtonElement>(null);
+  const cancelDeleteRef = useRef<HTMLButtonElement>(null);
+  const confirmDeleteRef = useRef<HTMLButtonElement>(null);
 
 
   const load = useCallback(async () => {
@@ -405,6 +409,12 @@ export default function Historico() {
     setDeleteTarget(null);
   };
 
+  useEffect(() => {
+    if (!deleteTarget) return;
+    setSelectedDeleteAction("excluir");
+    setTimeout(() => confirmDeleteRef.current?.focus(), 0);
+  }, [deleteTarget]);
+
   const handlePrintVenda = async (target: HistoricoActionTarget) => {
     if (!db || actionBusy) return;
     setActionBusy("print");
@@ -495,16 +505,54 @@ export default function Historico() {
     return () => window.removeEventListener("keydown", handler, true);
   }, [actionTarget, actionBusy, selectedAction, handlePrintVenda]);
 
+  useEffect(() => {
+    if (!deleteTarget || actionBusy) return;
+
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
+        e.preventDefault();
+        e.stopPropagation();
+        const next = selectedDeleteAction === "excluir" ? "cancelar" : "excluir";
+        setSelectedDeleteAction(next);
+        if (next === "cancelar") cancelDeleteRef.current?.focus();
+        else confirmDeleteRef.current?.focus();
+        return;
+      }
+
+      if (e.key === "Enter") {
+        e.preventDefault();
+        e.stopPropagation();
+        if (selectedDeleteAction === "cancelar") closeDeleteConfirm();
+        else handleDeleteVenda();
+      }
+    };
+
+    window.addEventListener("keydown", handler, true);
+    return () => window.removeEventListener("keydown", handler, true);
+  }, [deleteTarget, actionBusy, selectedDeleteAction]);
+
   const handleDeleteVenda = async () => {
     if (!db || !deleteTarget || actionBusy) return;
     setActionBusy("delete");
     try {
-      await db.execute("BEGIN TRANSACTION");
+      const vendaAtual = deleteTarget.kind === "todas"
+        ? vendas.find((v) => v.id === deleteTarget.id) ?? null
+        : null;
+      const deletePlan = buildHistoricoDeletePlan({
+        targetKind: deleteTarget.kind,
+        venda: vendaAtual,
+        prazoId: deleteTarget.kind === "prazo" ? deleteTarget.id : null,
+        prazoRows: vendasPrazo.map((v) => ({
+          id: v.id,
+          data_venda: v.data_venda,
+          total: v.total,
+        })),
+      });
 
-      if (deleteTarget.kind === "todas") {
+      if (deletePlan.deleteVendaId !== null) {
         const itens: Array<{ lote_id: number | null; quantidade: number }> = await db.select(
           "SELECT lote_id, quantidade FROM venda_itens WHERE venda_id = $1",
-          [deleteTarget.id]
+          [deletePlan.deleteVendaId]
         );
 
         for (const item of itens) {
@@ -522,20 +570,20 @@ export default function Historico() {
           }
         }
 
-        await db.execute("DELETE FROM venda_itens WHERE venda_id = $1", [deleteTarget.id]);
-        await db.execute("DELETE FROM vendas WHERE id = $1", [deleteTarget.id]);
-      } else {
-        await db.execute("DELETE FROM vendas_prazo_itens WHERE venda_id = $1", [deleteTarget.id]);
-        await db.execute("DELETE FROM vendas_prazo WHERE id = $1", [deleteTarget.id]);
+        await db.execute("DELETE FROM venda_itens WHERE venda_id = $1", [deletePlan.deleteVendaId]);
+        await db.execute("DELETE FROM vendas WHERE id = $1", [deletePlan.deleteVendaId]);
       }
 
-      await db.execute("COMMIT");
+      for (const prazoId of deletePlan.deletePrazoIds) {
+        await db.execute("DELETE FROM vendas_prazo_itens WHERE venda_id = $1", [prazoId]);
+        await db.execute("DELETE FROM vendas_prazo WHERE id = $1", [prazoId]);
+      }
+
       setDeleteTarget(null);
       await load();
     } catch (err) {
-      await db.execute("ROLLBACK").catch(() => {});
       console.error("Erro ao excluir venda:", err);
-      alert("Erro ao excluir venda.");
+      alert(`Erro ao excluir venda: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
       setActionBusy(null);
     }
@@ -978,18 +1026,30 @@ export default function Historico() {
           </p>
           <div className="flex gap-3">
             <button
+              ref={cancelDeleteRef}
               type="button"
               disabled={actionBusy !== null}
               onClick={closeDeleteConfirm}
-              className="flex-1 h-12 rounded-xl border border-white/10 text-white/60 font-bold uppercase text-xs hover:bg-white/5 disabled:opacity-50"
+              onFocus={() => setSelectedDeleteAction("cancelar")}
+              className={`flex-1 h-12 rounded-xl border font-bold uppercase text-xs transition-all outline-none disabled:opacity-50 ${
+                selectedDeleteAction === "cancelar"
+                  ? "border-white/25 bg-white/10 text-white ring-2 ring-white/15"
+                  : "border-white/10 text-white/60 hover:bg-white/5"
+              }`}
             >
               Cancelar
             </button>
             <button
+              ref={confirmDeleteRef}
               type="button"
               disabled={actionBusy !== null}
               onClick={handleDeleteVenda}
-              className="flex-1 h-12 rounded-xl bg-red-600 text-white font-bold uppercase text-xs hover:bg-red-500 disabled:opacity-50"
+              onFocus={() => setSelectedDeleteAction("excluir")}
+              className={`flex-1 h-12 rounded-xl text-white font-bold uppercase text-xs transition-all outline-none disabled:opacity-50 ${
+                selectedDeleteAction === "excluir"
+                  ? "bg-red-600 ring-2 ring-red-400/40"
+                  : "bg-red-600/85 hover:bg-red-500"
+              }`}
             >
               {actionBusy === "delete" ? "Excluindo..." : "Excluir"}
             </button>
