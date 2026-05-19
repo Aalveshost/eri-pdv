@@ -1,7 +1,10 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import { ChevronDown, ChevronRight } from "lucide-react";
+import { ChevronDown, ChevronRight, Printer, Trash2 } from "lucide-react";
+import { invoke } from "@tauri-apps/api/core";
 import { useDatabase } from "../hooks/useDatabase";
+import Modal from "../components/Modal";
 import { formatCurrency } from "../utils/currency";
+import { buildHistoricoPrintText, getHistoricoActionMeta, getHistoricoActions, getHistoricoDeleteConfirmText, getNextHistoricoAction } from "./historicoActions";
 
 interface Venda {
   id: number;
@@ -14,6 +17,7 @@ interface Venda {
 interface VendaItem {
   id: number;
   produto_id: number;
+  lote_id: number | null;
   quantidade: number;
   preco_unitario: number;
   produto_nome: string;
@@ -29,9 +33,17 @@ interface VendaPrazoRow {
 
 interface VendaPrazoItem {
   id: number;
+  venda_id?: number;
   produto_nome: string;
   quantidade: number;
   valor_total: number;
+}
+
+interface HistoricoActionTarget {
+  kind: "todas" | "prazo";
+  id: number;
+  titulo: string;
+  descricao: string;
 }
 
 function getTodayStr() {
@@ -196,6 +208,12 @@ export default function Historico() {
   const [vendaPrazoItems, setVendaPrazoItems] = useState<Record<number, VendaPrazoItem[]>>({});
   const [expandedPrazo, setExpandedPrazo] = useState<Set<number>>(new Set());
   const [activeTab, setActiveTab] = useState<'todas' | 'prazo'>('todas');
+  const [actionTarget, setActionTarget] = useState<HistoricoActionTarget | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<HistoricoActionTarget | null>(null);
+  const [actionBusy, setActionBusy] = useState<"print" | "delete" | null>(null);
+  const [selectedAction, setSelectedAction] = useState<"imprimir" | "excluir">("imprimir");
+  const [printToast, setPrintToast] = useState<string | null>(null);
+  const [printToastLeaving, setPrintToastLeaving] = useState(false);
 
   // ── Navegação ──
   // Zonas: null | 'ini' | 'fim' | 'tab-vendas' | 'tab-prazo' | 'lista-vendas' | 'lista-prazo'
@@ -209,6 +227,8 @@ export default function Historico() {
   const tabVendasRef = useRef<HTMLButtonElement>(null);
   const tabPrazoRef = useRef<HTMLButtonElement>(null);
   const rowRefs = useRef<(HTMLElement | null)[]>([]);
+  const printActionRef = useRef<HTMLButtonElement>(null);
+  const deleteActionRef = useRef<HTMLButtonElement>(null);
 
 
   const load = useCallback(async () => {
@@ -218,7 +238,23 @@ export default function Historico() {
     if (!isoInicial || !isoFinal) return;
 
     const vs: Venda[] = await db.select(
-      `SELECT v.id, v.total_venda, v.metodo_pagamento, v.data_venda, NULL as cliente_nome
+      `SELECT
+         v.id,
+         v.total_venda,
+         v.metodo_pagamento,
+         v.data_venda,
+         CASE
+           WHEN LOWER(v.metodo_pagamento) = 'prazo' THEN (
+             SELECT c.nome
+             FROM vendas_prazo vp
+             JOIN clientes c ON c.id = vp.cliente_id
+             WHERE vp.data_venda = v.data_venda
+               AND vp.total = v.total_venda
+             ORDER BY vp.id DESC
+             LIMIT 1
+           )
+           ELSE NULL
+         END as cliente_nome
        FROM vendas v
        WHERE DATE(v.data_venda) >= $1 AND DATE(v.data_venda) <= $2
        ORDER BY v.data_venda DESC, v.id DESC`,
@@ -243,6 +279,27 @@ export default function Historico() {
 
   useEffect(() => { load(); }, [load]);
 
+  useEffect(() => {
+    if (!printToast) {
+      setPrintToastLeaving(false);
+      return;
+    }
+
+    const exitTimer = window.setTimeout(() => {
+      setPrintToastLeaving(true);
+    }, 1500);
+
+    const clearTimer = window.setTimeout(() => {
+      setPrintToast(null);
+      setPrintToastLeaving(false);
+    }, 1800);
+
+    return () => {
+      window.clearTimeout(exitTimer);
+      window.clearTimeout(clearTimer);
+    };
+  }, [printToast]);
+
   // Foca input ao ativar zona
   useEffect(() => {
     if (navZone === 'ini' && !inputActive) {
@@ -263,6 +320,34 @@ export default function Historico() {
     }
   }, [focusedRow, navZone]);
 
+  const loadVendaItemsForVenda = useCallback(async (id: number) => {
+    if (!db) return [] as VendaItem[];
+    if (vendaItems[id]) return vendaItems[id];
+
+    const itens: any[] = await db.select(
+      `SELECT vi.id, vi.produto_id, vi.lote_id, vi.quantidade, vi.preco_unitario, p.nome as produto_nome
+       FROM venda_itens vi 
+       LEFT JOIN produtos p ON p.id = vi.produto_id
+       WHERE vi.venda_id = $1`, [id]
+    );
+
+    const processed = itens.map(i => ({
+      ...i,
+      produto_nome: i.produto_nome || `Produto #${i.produto_id} (Removido)`
+    }));
+    setVendaItems(prev => ({ ...prev, [id]: processed }));
+    return processed as VendaItem[];
+  }, [db, vendaItems]);
+
+  const loadVendaPrazoItemsForVenda = useCallback(async (id: number) => {
+    if (!db) return [] as VendaPrazoItem[];
+    if (vendaPrazoItems[id]) return vendaPrazoItems[id];
+
+    const itens: VendaPrazoItem[] = await db.select("SELECT * FROM vendas_prazo_itens WHERE venda_id=$1", [id]);
+    setVendaPrazoItems(prev => ({ ...prev, [id]: itens }));
+    return itens;
+  }, [db, vendaPrazoItems]);
+
   const toggleVenda = async (id: number) => {
     const isNowExpanded = !expandedVendas.has(id);
     
@@ -274,18 +359,7 @@ export default function Historico() {
 
     if (isNowExpanded && !vendaItems[id]) {
       try {
-        const itens: any[] = await db!.select(
-          `SELECT vi.id, vi.produto_id, vi.quantidade, vi.preco_unitario, p.nome as produto_nome
-           FROM venda_itens vi 
-           LEFT JOIN produtos p ON p.id = vi.produto_id
-           WHERE vi.venda_id = $1`, [id]
-        );
-        // Fallback for product name if product was deleted
-        const processed = itens.map(i => ({
-          ...i,
-          produto_nome: i.produto_nome || `Produto #${i.produto_id} (Removido)`
-        }));
-        setVendaItems(prev => ({...prev, [id]: processed}));
+        await loadVendaItemsForVenda(id);
       } catch (err) {
         console.error("Erro ao buscar itens da venda:", err);
       }
@@ -303,17 +377,177 @@ export default function Historico() {
 
     if (isNowExpanded && !vendaPrazoItems[id]) {
       try {
-        const itens: VendaPrazoItem[] = await db!.select("SELECT * FROM vendas_prazo_itens WHERE venda_id=$1", [id]);
-        setVendaPrazoItems(prev => ({...prev, [id]: itens}));
+        await loadVendaPrazoItemsForVenda(id);
       } catch (err) {
         console.error("Erro ao buscar itens a prazo:", err);
       }
     }
   };
 
+  const openActions = (target: HistoricoActionTarget) => {
+    setSelectedAction("imprimir");
+    setActionTarget(target);
+  };
+
+  const closeActions = () => {
+    if (actionBusy) return;
+    setActionTarget(null);
+  };
+
+  useEffect(() => {
+    if (!actionTarget) return;
+    setSelectedAction("imprimir");
+    setTimeout(() => printActionRef.current?.focus(), 0);
+  }, [actionTarget]);
+
+  const closeDeleteConfirm = () => {
+    if (actionBusy) return;
+    setDeleteTarget(null);
+  };
+
+  const handlePrintVenda = async (target: HistoricoActionTarget) => {
+    if (!db || actionBusy) return;
+    setActionBusy("print");
+    setActionTarget(null);
+    setPrintToast("Imprimindo...");
+    try {
+      if (target.kind === "todas") {
+        const venda = vendas.find(v => v.id === target.id);
+        if (!venda) return;
+        const itens = await loadVendaItemsForVenda(target.id);
+        await invoke("imprimir_padrao_direto", {
+          nome: `venda-${venda.id}.txt`,
+          conteudo: buildHistoricoPrintText({
+            titulo: `Venda #${venda.id}`,
+            subtitulo: `Pagamento em ${METODO_LABEL[venda.metodo_pagamento.toLowerCase()]?.label || venda.metodo_pagamento}`,
+            dataVenda: isoToBr(venda.data_venda),
+            total: venda.total_venda,
+            itens: itens.map(item => ({
+              descricao: item.produto_nome,
+              quantidade: item.quantidade,
+              valorUnitario: item.preco_unitario,
+              valorTotal: item.quantidade * item.preco_unitario,
+            })),
+          }),
+          copias: 1,
+          cortar: false,
+        });
+      } else {
+        const venda = vendasPrazo.find(v => v.id === target.id);
+        if (!venda) return;
+        const itens = await loadVendaPrazoItemsForVenda(target.id);
+        await invoke("imprimir_padrao_direto", {
+          nome: `venda-prazo-${venda.id}.txt`,
+          conteudo: buildHistoricoPrintText({
+            titulo: `Venda a Prazo #${venda.id}`,
+            subtitulo: venda.cliente_nome,
+            dataVenda: isoToBr(venda.data_venda),
+            total: venda.total,
+            itens: itens.map(item => ({
+              descricao: item.produto_nome,
+              quantidade: item.quantidade,
+              valorUnitario: item.quantidade > 0 ? item.valor_total / item.quantidade : item.valor_total,
+              valorTotal: item.valor_total,
+            })),
+          }),
+          copias: 1,
+          cortar: false,
+        });
+      }
+    } catch (err) {
+      setPrintToast(null);
+      console.error("Erro ao imprimir venda:", err);
+      alert("Erro ao imprimir venda.");
+    } finally {
+      setActionBusy(null);
+    }
+  };
+
+  const requestDeleteVenda = (target: HistoricoActionTarget) => {
+    setActionTarget(null);
+    setDeleteTarget(target);
+  };
+
+  useEffect(() => {
+    if (!actionTarget || actionBusy) return;
+
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+        e.preventDefault();
+        e.stopPropagation();
+        const next = getNextHistoricoAction(selectedAction, e.key);
+        setSelectedAction(next);
+        if (next === "imprimir") printActionRef.current?.focus();
+        else deleteActionRef.current?.focus();
+        return;
+      }
+
+      if (e.key === "Enter") {
+        e.preventDefault();
+        e.stopPropagation();
+        if (!actionTarget) return;
+        if (selectedAction === "imprimir") handlePrintVenda(actionTarget);
+        else requestDeleteVenda(actionTarget);
+      }
+    };
+
+    window.addEventListener("keydown", handler, true);
+    return () => window.removeEventListener("keydown", handler, true);
+  }, [actionTarget, actionBusy, selectedAction, handlePrintVenda]);
+
+  const handleDeleteVenda = async () => {
+    if (!db || !deleteTarget || actionBusy) return;
+    setActionBusy("delete");
+    try {
+      await db.execute("BEGIN TRANSACTION");
+
+      if (deleteTarget.kind === "todas") {
+        const itens: Array<{ lote_id: number | null; quantidade: number }> = await db.select(
+          "SELECT lote_id, quantidade FROM venda_itens WHERE venda_id = $1",
+          [deleteTarget.id]
+        );
+
+        for (const item of itens) {
+          if (item.lote_id !== null) {
+            await db.execute(
+              `UPDATE lotes
+               SET qtd_atual = qtd_atual + $1,
+                   qtd_vendida = CASE
+                     WHEN COALESCE(qtd_vendida, 0) >= $1 THEN qtd_vendida - $1
+                     ELSE 0
+                   END
+               WHERE id = $2`,
+              [item.quantidade, item.lote_id]
+            );
+          }
+        }
+
+        await db.execute("DELETE FROM venda_itens WHERE venda_id = $1", [deleteTarget.id]);
+        await db.execute("DELETE FROM vendas WHERE id = $1", [deleteTarget.id]);
+      } else {
+        await db.execute("DELETE FROM vendas_prazo_itens WHERE venda_id = $1", [deleteTarget.id]);
+        await db.execute("DELETE FROM vendas_prazo WHERE id = $1", [deleteTarget.id]);
+      }
+
+      await db.execute("COMMIT");
+      setDeleteTarget(null);
+      await load();
+    } catch (err) {
+      await db.execute("ROLLBACK").catch(() => {});
+      console.error("Erro ao excluir venda:", err);
+      alert("Erro ao excluir venda.");
+    } finally {
+      setActionBusy(null);
+    }
+  };
+
   // ── Handler teclado ──
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
+      if (actionTarget || deleteTarget) {
+        return;
+      }
+
       // Se inputActive, apenas Enter/Esc saem do modo edição
       if (inputActive) {
         if (e.key === 'Enter' || e.key === 'Escape') {
@@ -421,6 +655,11 @@ export default function Historico() {
           e.preventDefault(); e.stopPropagation();
           if (focusedRow > 0) setFocusedRow(focusedRow - 1);
           else { setNavZone('tab-vendas'); setFocusedRow(null); }
+        } else if (e.key === 'F1') {
+          e.preventDefault(); e.stopPropagation();
+          const venda = vendas[focusedRow];
+          const meta = getHistoricoActionMeta('todas', venda.id);
+          openActions({ kind: 'todas', id: venda.id, ...meta });
         } else if (e.key === 'Enter') {
           e.preventDefault(); e.stopPropagation();
           toggleVenda(vendas[focusedRow].id);
@@ -437,6 +676,11 @@ export default function Historico() {
           e.preventDefault(); e.stopPropagation();
           if (focusedRow > 0) setFocusedRow(focusedRow - 1);
           else { setNavZone('tab-prazo'); setFocusedRow(null); }
+        } else if (e.key === 'F1') {
+          e.preventDefault(); e.stopPropagation();
+          const venda = vendasPrazo[focusedRow];
+          const meta = getHistoricoActionMeta('prazo', venda.id);
+          openActions({ kind: 'prazo', id: venda.id, ...meta });
         } else if (e.key === 'Enter') {
           e.preventDefault(); e.stopPropagation();
           togglePrazo(vendasPrazo[focusedRow].id);
@@ -446,7 +690,7 @@ export default function Historico() {
     };
     window.addEventListener('keydown', handler, true);
     return () => window.removeEventListener('keydown', handler, true);
-  }, [navZone, inputActive, focusedRow, activeTab, vendas, vendasPrazo, load]);
+  }, [navZone, inputActive, focusedRow, activeTab, vendas, vendasPrazo, load, actionTarget, deleteTarget]);
 
   // Totais
   const totalDinheiro = vendas.filter(v => v.metodo_pagamento.toLowerCase() === 'dinheiro').reduce((a,v) => a+v.total_venda, 0);
@@ -460,6 +704,13 @@ export default function Historico() {
   return (
     <div className="flex flex-col h-full gap-4">
       <h1 className="text-3xl font-black italic text-luxury-orange uppercase">Histórico de Vendas</h1>
+
+      <div className="glass-card px-4 py-2 flex gap-6 text-xs font-bold text-white/40">
+        <span><span className="text-luxury-orange">F1</span> = Ações</span>
+        <span><span className="text-luxury-orange">ENTER</span> = Expandir</span>
+        <span><span className="text-luxury-orange">↑↓</span> = Navegar</span>
+        <span><span className="text-luxury-orange">ESC</span> = Sair</span>
+      </div>
 
       {/* Filtro + Resumo */}
       <div className="glass-card px-4 py-3 flex flex-row gap-6 items-end">
@@ -536,6 +787,7 @@ export default function Historico() {
           <thead className="sticky top-0 bg-luxury-dark-gray/90 backdrop-blur-sm">
             <tr className="border-b border-white/5 text-xs uppercase tracking-widest text-white/40">
               <th className="px-4 py-3 w-8"></th>
+              <th className="px-4 py-3 w-24">ID</th>
               <th className="px-4 py-3">Data</th>
               <th className="px-4 py-3">{activeTab === 'todas' ? 'Método' : 'Cliente'}</th>
               <th className="px-4 py-3 text-right">Total</th>
@@ -543,7 +795,7 @@ export default function Historico() {
           </thead>
           <tbody>
             {activeList.length === 0 && (
-              <tr><td colSpan={4} className="px-4 py-8 text-center text-white/30 text-sm">Nenhuma venda no período</td></tr>
+              <tr><td colSpan={5} className="px-4 py-8 text-center text-white/30 text-sm">Nenhuma venda no período</td></tr>
             )}
             {activeTab === 'todas' && vendas.map((v, i) => {
               const metodoLower = v.metodo_pagamento.toLowerCase();
@@ -553,9 +805,12 @@ export default function Historico() {
               };
               const focused = navZone === 'lista-vendas' && focusedRow === i;
               const expanded = expandedVendas.has(v.id);
+              const metodoLabel = metodoLower === 'prazo' && v.cliente_nome
+                ? `${meta.label} - ${v.cliente_nome}`
+                : meta.label;
               return (
                 <tr key={v.id} className="group">
-                  <td colSpan={4} className="p-0">
+                  <td colSpan={5} className="p-0">
                     <div
                       onClick={() => toggleVenda(v.id)}
                       ref={el => { rowRefs.current[i] = el; }}
@@ -568,8 +823,9 @@ export default function Historico() {
                       <div className="px-4 py-3 w-8 text-white/30 shrink-0">
                         {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
                       </div>
+                      <div className="px-4 py-3 font-mono text-xs text-white/45 w-24 shrink-0">#{v.id}</div>
                       <div className="px-4 py-3 font-mono text-sm text-white/70 w-48 shrink-0">{isoToBr(v.data_venda)}</div>
-                      <div className={`px-4 py-3 font-bold text-sm flex-1 ${meta.color}`}>{meta.label}</div>
+                      <div className={`px-4 py-3 font-bold text-sm flex-1 ${meta.color}`}>{metodoLabel}</div>
                       <div className="px-4 py-3 text-right font-black text-white w-32 shrink-0">R$ {formatCurrency(v.total_venda)}</div>
                     </div>
                     {expanded && (
@@ -608,7 +864,7 @@ export default function Historico() {
               const expanded = expandedPrazo.has(v.id);
               return (
                 <tr key={v.id}>
-                  <td colSpan={4} className="p-0">
+                  <td colSpan={5} className="p-0">
                     <div
                       onClick={() => togglePrazo(v.id)}
                       ref={el => { rowRefs.current[i] = el; }}
@@ -621,8 +877,11 @@ export default function Historico() {
                       <div className="px-4 py-3 w-8 text-white/30 shrink-0">
                         {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
                       </div>
+                      <div className="px-4 py-3 font-mono text-xs text-white/45 w-24 shrink-0">#{v.id}</div>
                       <div className="px-4 py-3 font-mono text-sm text-white/70 w-48 shrink-0">{isoToBr(v.data_venda)}</div>
-                      <div className="px-4 py-3 font-semibold text-luxury-orange flex-1">{v.cliente_nome}</div>
+                      <div className="px-4 py-3 font-semibold text-luxury-orange flex-1">
+                        A Prazo - {v.cliente_nome}
+                      </div>
                       <div className="px-4 py-3 text-right font-black text-white w-32 shrink-0">R$ {formatCurrency(v.total)}</div>
                     </div>
                     {expanded && (
@@ -659,6 +918,96 @@ export default function Historico() {
           </tbody>
         </table>
       </div>
+
+      <Modal
+        isOpen={actionTarget !== null}
+        onClose={closeActions}
+        title={actionTarget?.titulo || "Acoes"}
+      >
+        <div className="space-y-3">
+          {getHistoricoActions().map((action) => (
+            <button
+              key={action}
+              ref={action === "imprimir" ? printActionRef : deleteActionRef}
+              type="button"
+              disabled={actionBusy !== null || !actionTarget}
+              onFocus={() => setSelectedAction(action)}
+              onClick={() => {
+                if (!actionTarget) return;
+                if (action === "imprimir") handlePrintVenda(actionTarget);
+                if (action === "excluir") requestDeleteVenda(actionTarget);
+              }}
+              className={`w-full h-14 rounded-xl border text-left px-4 transition-all outline-none disabled:opacity-50 ${
+                action === "imprimir"
+                  ? selectedAction === "imprimir"
+                    ? "bg-white/10 border-luxury-orange/50 ring-2 ring-luxury-orange/45"
+                    : "bg-white/5 border-white/10 hover:bg-white/10"
+                  : selectedAction === "excluir"
+                    ? "bg-red-500/18 border-red-500/35 ring-2 ring-red-500/35"
+                    : "bg-red-500/10 border-red-500/20 hover:bg-red-500/15"
+              }`}
+            >
+              <div className="flex items-center gap-3">
+                <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${
+                  action === "imprimir" ? "bg-luxury-orange/15 text-luxury-orange" : "bg-red-500/15 text-red-400"
+                }`}>
+                  {action === "imprimir" ? <Printer size={18} /> : <Trash2 size={18} />}
+                </div>
+                <div>
+                  <p className="font-bold uppercase text-sm text-white">
+                    {action === "imprimir" ? "Imprimir" : "Excluir"}
+                  </p>
+                  <p className="text-xs text-white/40">
+                    {action === "imprimir" ? "Abrir impressao desta venda" : "Apagar a venda selecionada"}
+                  </p>
+                </div>
+              </div>
+            </button>
+          ))}
+        </div>
+      </Modal>
+
+      <Modal
+        isOpen={deleteTarget !== null}
+        onClose={closeDeleteConfirm}
+        title="Confirmar Exclusao"
+      >
+        <div className="space-y-6">
+          <p className="text-sm text-white/70 leading-relaxed">
+            {deleteTarget ? getHistoricoDeleteConfirmText(deleteTarget.descricao) : ""}
+          </p>
+          <div className="flex gap-3">
+            <button
+              type="button"
+              disabled={actionBusy !== null}
+              onClick={closeDeleteConfirm}
+              className="flex-1 h-12 rounded-xl border border-white/10 text-white/60 font-bold uppercase text-xs hover:bg-white/5 disabled:opacity-50"
+            >
+              Cancelar
+            </button>
+            <button
+              type="button"
+              disabled={actionBusy !== null}
+              onClick={handleDeleteVenda}
+              className="flex-1 h-12 rounded-xl bg-red-600 text-white font-bold uppercase text-xs hover:bg-red-500 disabled:opacity-50"
+            >
+              {actionBusy === "delete" ? "Excluindo..." : "Excluir"}
+            </button>
+          </div>
+        </div>
+      </Modal>
+
+      {printToast && (
+        <div className="fixed inset-x-0 bottom-6 z-[400] flex justify-center px-4 pointer-events-none">
+          <div
+            className={`min-w-[220px] max-w-sm rounded-xl border border-green-200/20 bg-green-500/18 px-4 py-3 text-center text-xs font-semibold uppercase tracking-[0.12em] text-white shadow-xl shadow-green-950/20 backdrop-blur-md transition-all duration-300 ${
+              printToastLeaving ? "translate-y-8 opacity-0" : "translate-y-0 opacity-100"
+            }`}
+          >
+            {printToast}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

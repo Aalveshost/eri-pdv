@@ -6,7 +6,10 @@ CREATE TABLE IF NOT EXISTS configuracoes (
     dias_alerta_validade INTEGER DEFAULT 5,
     caminho_backup_externo TEXT,
     ultimo_backup_realizado DATETIME,
-    nome_loja TEXT DEFAULT 'Salgados Pro'
+    nome_loja TEXT DEFAULT 'Salgados Pro',
+    impressao_automatica INTEGER DEFAULT 0,
+    impressao_vias INTEGER DEFAULT 1,
+    impressao_corte INTEGER DEFAULT 0
 );
 
 -- Insert default config if not exists

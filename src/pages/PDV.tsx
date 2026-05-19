@@ -1,11 +1,16 @@
 import { useState, useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
-import { CreditCard, Banknote, QrCode, X, Pencil, Trash2, Smartphone, Clock, Check } from "lucide-react";
+import { CreditCard, Banknote, QrCode, X, Pencil, Trash2, Smartphone, Clock, Check, Printer } from "lucide-react";
 import { useDatabase } from "../hooks/useDatabase";
 import { useScanner } from "../hooks/useScanner";
+import { invoke } from "@tauri-apps/api/core";
 import { processarVendaFIFO } from "../utils/fifoEngine";
 import { normalizeText } from "../utils/text";
 import { formatCurrency, parseCurrencyToNumber, handleCurrencyInput, handleWeightInput, finalizeWeightInput } from "../utils/currency";
+import { buildHistoricoPrintText } from "./historicoActions";
+import { getCashPaymentSummary } from "./pdvCashFlow";
+import { formatDateBR, getCashCheckoutCancelState, getCashCheckoutOpenState, getCheckoutDefaultSelection, getPostFinalizeVendaState, getTodayDigits, getVendaSuccessToastTiming } from "./pdvFlow";
+import { getAutoPrintCopies, getManualPrintCopies, getNextRecentSaleIndex, normalizePrintConfigRow, type PrintConfig } from "./pdvPrintFlow";
 
 // Module-level flag: set by Layout when user presses Enter on PDV sidebar link
 // Checked on mount to decide whether to auto-focus the date input
@@ -30,28 +35,78 @@ interface CartItem {
   quantidade: number;
 }
 
-function formatDateBR(date: Date) {
-  const d = String(date.getDate()).padStart(2, '0');
-  const m = String(date.getMonth() + 1).padStart(2, '0');
-  const y = date.getFullYear();
-  return `${d}/${m}/${y}`;
+interface RecentSale {
+  id: number;
+  total_venda: number;
+  metodo_pagamento: string;
+  data_venda: string;
+  cliente_nome: string | null;
+}
+
+interface RecentSaleItem {
+  id: number;
+  produto_nome: string;
+  quantidade: number;
+  preco_unitario: number;
+}
+
+interface PrintConfigWithStore extends PrintConfig {
+  nomeLoja: string;
+}
+
+const PAYMENT_LABELS: Record<string, string> = {
+  dinheiro: "Dinheiro",
+  pix: "PIX",
+  credito: "Crédito",
+  debito: "Débito",
+  cartao: "Cartão",
+  prazo: "A Prazo",
+};
+
+const PAYMENT_COLORS: Record<string, string> = {
+  dinheiro: "text-green-400",
+  pix: "text-blue-400",
+  cartao: "text-purple-400",
+  credito: "text-purple-400",
+  debito: "text-purple-400",
+  prazo: "text-luxury-orange",
+};
+
+function formatSaleDateTime(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString("pt-BR", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
+}
+
+function getSalePaymentLabel(sale: Pick<RecentSale, "metodo_pagamento" | "cliente_nome">) {
+  const method = sale.metodo_pagamento.toLowerCase();
+  const base = PAYMENT_LABELS[method] || `${sale.metodo_pagamento}`;
+  if (method === "prazo" && sale.cliente_nome) {
+    return `${base} - ${sale.cliente_nome}`;
+  }
+  return base;
+}
+
+function getSalePaymentColor(method: string) {
+  return PAYMENT_COLORS[method.toLowerCase()] || "text-white";
 }
 
 export default function PDV() {
   const { db } = useDatabase();
-  const getTodayDigits = () => {
-    const now = new Date();
-    const d = String(now.getDate()).padStart(2, '0');
-    const m = String(now.getMonth() + 1).padStart(2, '0');
-    const y = String(now.getFullYear());
-    return d + m + y;
-  };
+  const getTodayDigitsNow = () => getTodayDigits(new Date());
 
   const [stage, setStage] = useState<'date' | 'selling' | 'checkout'>('date');
   const [cart, setCart] = useState<CartItem[]>([]);
   const [search, setSearch] = useState("");
   const [vendaDate, setVendaDate] = useState(formatDateBR(new Date()));
-  const [dateDigits, setDateDigits] = useState(getTodayDigits().padEnd(8, '_'));
+  const [dateDigits, setDateDigits] = useState(getTodayDigitsNow().padEnd(8, '_'));
   const [showQuantityModal, setShowQuantityModal] = useState(false);
   const [quantityInput, setQuantityInput] = useState("1");
   const [selectedProduct, setSelectedProduct] = useState<any>(null);
@@ -67,7 +122,7 @@ export default function PDV() {
   const [exitConfirmSelected, setExitConfirmSelected] = useState<'exit' | 'continue'>('exit');
   // checkout keyboard nav: 'prazo'(row0) | 'dinheiro'(row1,col0) | 'pix'(row1,col1) | 'credito'(row2,col0) | 'debito'(row2,col1)
   type CheckoutOption = 'prazo' | 'dinheiro' | 'pix' | 'credito' | 'debito';
-  const [checkoutSelected, setCheckoutSelected] = useState<CheckoutOption>('prazo');
+  const [checkoutSelected, setCheckoutSelected] = useState<CheckoutOption>('dinheiro');
   const [dateError, setDateError] = useState("");
   const [showClienteModal, setShowClienteModal] = useState(false);
   const [clientes, setClientes] = useState<{id:number;nome:string;telefone:string|null}[]>([]);
@@ -75,10 +130,22 @@ export default function PDV() {
   const [clienteSelecionado, setClienteSelecionado] = useState<{id:number;nome:string}|null>(null);
   const [showPaymentConfirm, setShowPaymentConfirm] = useState(false);
   const [pendingPayment, setPendingPayment] = useState<{method: string, label: string} | null>(null);
+  const [showCashConfirm, setShowCashConfirm] = useState(false);
+  const [cashPaidInput, setCashPaidInput] = useState("0,00");
   const [clienteFocusedIdx, setClienteFocusedIdx] = useState<number>(-1);
   const clienteListRef = useRef<HTMLDivElement>(null);
   const clienteItemRefs = useRef<(HTMLButtonElement | null)[]>([]);
   const [vendaSuccess, setVendaSuccess] = useState<string|null>(null);
+  const [vendaSuccessLeaving, setVendaSuccessLeaving] = useState(false);
+  const [showRecentPrintModal, setShowRecentPrintModal] = useState(false);
+  const [recentSales, setRecentSales] = useState<RecentSale[]>([]);
+  const [recentSalesLoading, setRecentSalesLoading] = useState(false);
+  const [selectedRecentSaleIndex, setSelectedRecentSaleIndex] = useState(0);
+  const [recentPrintConfirmSale, setRecentPrintConfirmSale] = useState<RecentSale | null>(null);
+  const [recentPrintPreviewItems, setRecentPrintPreviewItems] = useState<RecentSaleItem[]>([]);
+  const [recentPrintPreviewLoading, setRecentPrintPreviewLoading] = useState(false);
+  const [recentPrintActionSelected, setRecentPrintActionSelected] = useState<"print" | "cancel">("print");
+  const [printingRecentSale, setPrintingRecentSale] = useState(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const dateInputRef = useRef<HTMLInputElement>(null);
   const modalQuantityRef = useRef<HTMLInputElement>(null);
@@ -96,11 +163,195 @@ export default function PDV() {
   const total = cart.reduce((acc, item) => acc + (item.preco * item.quantidade), 0);
 
   const [confirmActionSelected, setConfirmActionSelected] = useState<'confirm' | 'cancel'>('confirm');
+  const cashPaidRef = useRef<HTMLInputElement>(null);
+
+  const openCashConfirm = () => {
+    const nextState = getCashCheckoutOpenState();
+    setCashPaidInput(nextState.cashPaidInput);
+    setShowCashConfirm(nextState.showCashConfirm);
+  };
+
+  const closeCashConfirm = () => {
+    const nextState = getCashCheckoutCancelState();
+    setCashPaidInput(nextState.cashPaidInput);
+    setShowCashConfirm(nextState.showCashConfirm);
+    setStage(nextState.stage);
+  };
 
   const requestFinalize = (method: string, label: string) => {
+    if (method === "dinheiro") {
+      openCashConfirm();
+      return;
+    }
     setPendingPayment({ method, label });
     setConfirmActionSelected('confirm');
     setShowPaymentConfirm(true);
+  };
+
+  const cashSummary = getCashPaymentSummary(total, parseCurrencyToNumber(cashPaidInput));
+
+  const loadPrintConfig = async (): Promise<PrintConfigWithStore> => {
+    if (!db) {
+      return {
+        nomeLoja: "Salgados Pro",
+        autoPrintEnabled: false,
+        autoPrintCopies: 1,
+        cutPaperEnabled: false,
+      };
+    }
+
+    const rows: any[] = await db.select(
+      "SELECT nome_loja, impressao_automatica, impressao_vias, impressao_corte FROM configuracoes WHERE id = 1",
+    );
+    const row = rows[0] || {};
+    return {
+      nomeLoja: row.nome_loja || "Salgados Pro",
+      ...normalizePrintConfigRow(row),
+    };
+  };
+
+  const buildSalePrintContent = (
+    sale: Pick<RecentSale, "id" | "metodo_pagamento" | "cliente_nome" | "data_venda" | "total_venda">,
+    itens: Array<{ descricao: string; quantidade: number; valorUnitario: number; valorTotal: number }>,
+    nomeLoja: string,
+  ) => {
+    return buildHistoricoPrintText({
+      titulo: nomeLoja,
+      subtitulo: `Venda #${sale.id} - ${getSalePaymentLabel(sale)}`,
+      dataVenda: formatSaleDateTime(sale.data_venda),
+      total: sale.total_venda,
+      itens,
+    });
+  };
+
+  const printSaleDirect = async (
+    sale: Pick<RecentSale, "id" | "metodo_pagamento" | "cliente_nome" | "data_venda" | "total_venda">,
+    itens: Array<{ descricao: string; quantidade: number; valorUnitario: number; valorTotal: number }>,
+    config: PrintConfigWithStore,
+    copies: number,
+  ) => {
+    await invoke("imprimir_padrao_direto", {
+      nome: `venda-${sale.id}.txt`,
+      conteudo: buildSalePrintContent(sale, itens, config.nomeLoja),
+      copias: copies,
+      cortar: config.cutPaperEnabled,
+    });
+  };
+
+  const loadRecentSales = async () => {
+    if (!db) return [];
+    const rows: RecentSale[] = await db.select(
+      `SELECT
+         v.id,
+         v.total_venda,
+         v.metodo_pagamento,
+         v.data_venda,
+         CASE
+           WHEN LOWER(v.metodo_pagamento) = 'prazo' THEN (
+             SELECT c.nome
+             FROM vendas_prazo vp
+             JOIN clientes c ON c.id = vp.cliente_id
+             WHERE vp.data_venda = v.data_venda
+               AND vp.total = v.total_venda
+             ORDER BY vp.id DESC
+             LIMIT 1
+           )
+           ELSE NULL
+         END as cliente_nome
+       FROM vendas v
+       ORDER BY v.data_venda DESC, v.id DESC
+       LIMIT 10`,
+    );
+    return rows;
+  };
+
+  const loadRecentSaleItems = async (saleId: number) => {
+    if (!db) return [] as RecentSaleItem[];
+    const rows: any[] = await db.select(
+      `SELECT vi.id, vi.quantidade, vi.preco_unitario, p.nome as produto_nome
+       FROM venda_itens vi
+       LEFT JOIN produtos p ON p.id = vi.produto_id
+       WHERE vi.venda_id = $1`,
+      [saleId],
+    );
+
+    return rows.map((row) => ({
+      id: row.id,
+      quantidade: row.quantidade,
+      preco_unitario: row.preco_unitario,
+      produto_nome: row.produto_nome || `Produto removido`,
+    }));
+  };
+
+  const openRecentPrintModal = async () => {
+    if (!db) return;
+    setRecentSalesLoading(true);
+    try {
+      const rows = await loadRecentSales();
+      setRecentSales(rows);
+      setSelectedRecentSaleIndex(0);
+      setRecentPrintConfirmSale(null);
+      setShowRecentPrintModal(true);
+    } catch (err) {
+      console.error("Erro ao carregar últimas vendas:", err);
+      alert("Erro ao carregar últimas vendas.");
+    } finally {
+      setRecentSalesLoading(false);
+    }
+  };
+
+  const closeRecentPrintModal = () => {
+    if (printingRecentSale) return;
+    setRecentPrintConfirmSale(null);
+    setRecentPrintPreviewItems([]);
+    setShowRecentPrintModal(false);
+  };
+
+  const openRecentPrintConfirm = async (sale: RecentSale) => {
+    setRecentPrintConfirmSale(sale);
+    setRecentPrintActionSelected("print");
+    setRecentPrintPreviewLoading(true);
+    try {
+      const itens = await loadRecentSaleItems(sale.id);
+      setRecentPrintPreviewItems(itens);
+    } catch (err) {
+      console.error("Erro ao carregar itens da venda:", err);
+      setRecentPrintPreviewItems([]);
+    } finally {
+      setRecentPrintPreviewLoading(false);
+    }
+  };
+
+  const handleManualPrintSale = async (sale: RecentSale) => {
+    if (!db || printingRecentSale) return;
+    setPrintingRecentSale(true);
+    try {
+      const [config, itens] = await Promise.all([
+        loadPrintConfig(),
+        loadRecentSaleItems(sale.id),
+      ]);
+
+      await printSaleDirect(
+        sale,
+        itens.map((item) => ({
+          descricao: item.produto_nome,
+          quantidade: item.quantidade,
+          valorUnitario: item.preco_unitario,
+          valorTotal: item.quantidade * item.preco_unitario,
+        })),
+        config,
+        getManualPrintCopies(),
+      );
+
+      setRecentPrintConfirmSale(null);
+      setRecentPrintPreviewItems([]);
+      setShowRecentPrintModal(false);
+    } catch (err) {
+      console.error("Erro ao imprimir venda manualmente:", err);
+      alert("Erro ao imprimir venda.");
+    } finally {
+      setPrintingRecentSale(false);
+    }
   };
 
   // Search for products (only when in selling stage)
@@ -227,6 +478,47 @@ export default function PDV() {
     }
   }, [showExitConfirm, stage]);
 
+  useEffect(() => {
+    if (showCashConfirm) {
+      setTimeout(() => {
+        cashPaidRef.current?.focus();
+        cashPaidRef.current?.select();
+      }, 50);
+    }
+  }, [showCashConfirm]);
+
+  useEffect(() => {
+    if (!vendaSuccess) {
+      setVendaSuccessLeaving(false);
+      return;
+    }
+
+    const { visibleMs, exitMs } = getVendaSuccessToastTiming();
+    setVendaSuccessLeaving(false);
+
+    const exitTimer = window.setTimeout(() => {
+      setVendaSuccessLeaving(true);
+    }, visibleMs);
+
+    const clearTimer = window.setTimeout(() => {
+      setVendaSuccess(null);
+      setVendaSuccessLeaving(false);
+    }, visibleMs + exitMs);
+
+    return () => {
+      window.clearTimeout(exitTimer);
+      window.clearTimeout(clearTimer);
+    };
+  }, [vendaSuccess]);
+
+  useEffect(() => {
+    if (!showRecentPrintModal) {
+      setRecentPrintConfirmSale(null);
+      setRecentPrintPreviewItems([]);
+      setRecentPrintPreviewLoading(false);
+    }
+  }, [showRecentPrintModal]);
+
   // Cliente modal keyboard navigation
   useEffect(() => {
     if (!showClienteModal) return;
@@ -239,6 +531,7 @@ export default function PDV() {
       c.nome.includes(clienteSearch) || (c.telefone || '').includes(clienteSearch)
     );
     const handler = (e: KeyboardEvent) => {
+      if (showPaymentConfirm) return;
       if (e.key === 'ArrowDown') {
         e.preventDefault(); e.stopPropagation();
         setClienteFocusedIdx(prev => {
@@ -267,12 +560,11 @@ export default function PDV() {
     };
     window.addEventListener('keydown', handler, true);
     return () => window.removeEventListener('keydown', handler, true);
-  }, [showClienteModal, clienteSearch, clienteSelecionado, clientes]);
+  }, [showClienteModal, clienteSearch, clienteSelecionado, clientes, showPaymentConfirm]);
 
   // Checkout keyboard navigation + sidebar lock
   useEffect(() => {
     if (stage !== 'checkout') return;
-    setCheckoutSelected('dinheiro');
 
     // nav map: key -> {up,down,left,right}
     const nav: Record<string, Partial<Record<string, string>>> = {
@@ -290,7 +582,7 @@ export default function PDV() {
     };
 
     const handler = (e: KeyboardEvent) => {
-      if (showClienteModal || showPaymentConfirm) return;
+      if (showClienteModal || showPaymentConfirm || showCashConfirm) return;
       if (['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Enter','Escape','Tab'].includes(e.key)) {
         e.preventDefault(); e.stopPropagation();
       }
@@ -310,13 +602,70 @@ export default function PDV() {
 
     window.addEventListener('keydown', handler, true);
     return () => window.removeEventListener('keydown', handler, true);
-  }, [stage, showClienteModal, showPaymentConfirm]);
+  }, [stage, showClienteModal, showPaymentConfirm, showCashConfirm]);
 
   // Keep pdvModalOpen in sync so Layout can skip its key handling while a modal is open
   useEffect(() => {
-    pdvModalOpen = showExitConfirm || showQuantityModal || showClienteModal || showPaymentConfirm || stage === 'checkout';
+    pdvModalOpen =
+      showExitConfirm ||
+      showQuantityModal ||
+      showClienteModal ||
+      showPaymentConfirm ||
+      showCashConfirm ||
+      showRecentPrintModal ||
+      stage === 'checkout';
     return () => { pdvModalOpen = false; };
-  }, [showExitConfirm, showQuantityModal, showClienteModal, showPaymentConfirm, stage]);
+  }, [showExitConfirm, showQuantityModal, showClienteModal, showPaymentConfirm, showCashConfirm, showRecentPrintModal, stage]);
+
+  useEffect(() => {
+    if (!showRecentPrintModal) return;
+
+    const handler = (e: KeyboardEvent) => {
+      if (printingRecentSale) return;
+      if (["ArrowUp", "ArrowDown", "Enter", "Escape"].includes(e.key)) {
+        e.preventDefault();
+        e.stopPropagation();
+      }
+
+      if (recentPrintConfirmSale) {
+        if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
+          setRecentPrintActionSelected((prev) => (prev === "print" ? "cancel" : "print"));
+          return;
+        }
+        if (e.key === "Escape") {
+          setRecentPrintConfirmSale(null);
+          setRecentPrintPreviewItems([]);
+          return;
+        }
+        if (e.key === "Enter") {
+          if (recentPrintActionSelected === "print") {
+            handleManualPrintSale(recentPrintConfirmSale);
+          } else {
+            setRecentPrintConfirmSale(null);
+            setRecentPrintPreviewItems([]);
+          }
+        }
+        return;
+      }
+
+      if (e.key === "Escape") {
+        closeRecentPrintModal();
+        return;
+      }
+
+      if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+        setSelectedRecentSaleIndex((prev) => getNextRecentSaleIndex(prev, e.key as "ArrowUp" | "ArrowDown", recentSales.length));
+        return;
+      }
+
+      if (e.key === "Enter" && recentSales[selectedRecentSaleIndex]) {
+        void openRecentPrintConfirm(recentSales[selectedRecentSaleIndex]);
+      }
+    };
+
+    window.addEventListener("keydown", handler, true);
+    return () => window.removeEventListener("keydown", handler, true);
+  }, [showRecentPrintModal, recentPrintConfirmSale, recentSales, selectedRecentSaleIndex, printingRecentSale, recentPrintActionSelected]);
 
   // Register navigate-away interceptor so Layout can ask PDV before leaving
   useEffect(() => {
@@ -424,14 +773,23 @@ export default function PDV() {
     };
 
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (showQuantityModal || showExitConfirm || showClienteModal || editingItemIdRef.current !== null) {
+      if (showQuantityModal || showExitConfirm || showClienteModal || showRecentPrintModal || editingItemIdRef.current !== null) {
         return;
       }
 
       // F1: finalizar venda
       if (e.key === 'F1') {
         e.preventDefault(); e.stopPropagation();
-        if (cart.length > 0) setStage('checkout');
+        if (cart.length > 0) {
+          setCheckoutSelected(getCheckoutDefaultSelection('dinheiro'));
+          setStage('checkout');
+        }
+        return;
+      }
+
+      if (e.key === 'F2') {
+        e.preventDefault(); e.stopPropagation();
+        void openRecentPrintModal();
         return;
       }
 
@@ -571,7 +929,7 @@ export default function PDV() {
 
     window.addEventListener('keydown', handleKeyDown, true);
     return () => window.removeEventListener('keydown', handleKeyDown, true);
-  }, [stage, cart, cart.length, showExitConfirm, products, focusedProductIndex, search, focusedCartIndex, focusedCartAction, confirmDeleteIdx, focusedZone, editingItemId, showQuantityModal, showClienteModal]);
+  }, [stage, cart, cart.length, showExitConfirm, products, focusedProductIndex, search, focusedCartIndex, focusedCartAction, confirmDeleteIdx, focusedZone, editingItemId, showQuantityModal, showClienteModal, showRecentPrintModal]);
 
   const loadClientes = async () => {
     if (!db) return;
@@ -583,6 +941,13 @@ export default function PDV() {
     if (!db || cart.length === 0) return;
 
     try {
+      const cartSnapshot = cart.map((item) => ({
+        descricao: item.nome,
+        quantidade: item.quantidade,
+        valorUnitario: item.preco,
+        valorTotal: item.preco * item.quantidade,
+      }));
+      const clienteNomeSnapshot = clienteSelecionado?.nome || null;
       const itemsInput = cart.map(i => ({
         produtoId: i.id,
         quantidade: i.quantidade,
@@ -590,6 +955,7 @@ export default function PDV() {
       }));
       const todayBr = formatDateBR(new Date());
       let isoDate = vendaDate.split('/').reverse().join('-');
+      let vendaId: number | null = null;
       
       if (vendaDate === todayBr) {
         const now = new Date();
@@ -600,7 +966,8 @@ export default function PDV() {
       }
 
       if (metodo === 'prazo' && clienteId) {
-        await processarVendaFIFO(db, itemsInput, 'prazo', total, isoDate);
+        const vendaResult = await processarVendaFIFO(db, itemsInput, 'prazo', total, isoDate);
+        vendaId = Number(vendaResult.vendaId);
         const res = await db.execute(
           "INSERT INTO vendas_prazo (cliente_id, data_venda, total) VALUES ($1, $2, $3)",
           [clienteId, isoDate, total]
@@ -613,21 +980,47 @@ export default function PDV() {
           );
         }
       } else {
-        await processarVendaFIFO(db, itemsInput, metodo, total, isoDate);
+        const vendaResult = await processarVendaFIFO(db, itemsInput, metodo, total, isoDate);
+        vendaId = Number(vendaResult.vendaId);
       }
 
+      setCashPaidInput("0,00");
+      setShowCashConfirm(false);
+      const postFinalizeState = getPostFinalizeVendaState(new Date());
       setShowPaymentConfirm(false);
       setCart([]);
       setClienteSelecionado(null);
       setShowClienteModal(false);
       setVendaSuccess(metodo === 'prazo' ? `Venda lançada no prazo para ${clienteSelecionado?.nome}!` : 'Venda realizada com sucesso!');
-      setStage('date');
-      const now = new Date();
-      setDateDigits(
-        String(now.getDate()).padStart(2,'0') +
-        String(now.getMonth()+1).padStart(2,'0') +
-        String(now.getFullYear())
-      );
+      setVendaDate(postFinalizeState.vendaDate);
+      setDateDigits(postFinalizeState.dateDigits);
+      setStage(postFinalizeState.stage);
+
+      if (vendaId !== null) {
+        void (async () => {
+          try {
+            const config = await loadPrintConfig();
+            const copies = getAutoPrintCopies(config);
+            if (copies <= 0) return;
+
+            await printSaleDirect(
+              {
+                id: vendaId,
+                metodo_pagamento: metodo,
+                cliente_nome: clienteNomeSnapshot,
+                data_venda: isoDate,
+                total_venda: total,
+              },
+              cartSnapshot,
+              config,
+              copies,
+            );
+          } catch (printErr) {
+            console.error("Erro na impressão automática:", printErr);
+            alert("Venda concluída, mas a impressão automática falhou.");
+          }
+        })();
+      }
     } catch (err: any) {
       const msg = err?.message || String(err);
       console.error("Erro ao processar venda:", msg);
@@ -642,6 +1035,21 @@ export default function PDV() {
     setPendingPayment({ method: 'prazo', label: 'A Prazo' });
     setShowClienteModal(true);
   };
+
+  const vendaSuccessToast = vendaSuccess && createPortal(
+    <div className="fixed inset-x-0 bottom-6 z-[400] flex justify-center px-4 pointer-events-none">
+      <div
+        className={`min-w-[220px] max-w-sm rounded-xl border border-green-200/20 bg-green-500/18 px-4 py-3 text-center text-xs font-semibold uppercase tracking-[0.12em] text-white shadow-xl shadow-green-950/20 backdrop-blur-md transition-all duration-300 ${
+          vendaSuccessLeaving
+            ? "translate-y-8 opacity-0"
+            : "translate-y-0 opacity-100"
+        }`}
+      >
+        {vendaSuccess}
+      </div>
+    </div>,
+    document.body
+  );
 
   if (stage === 'date') {
     const isValidDate = (day: number, month: number, year: number): boolean => {
@@ -683,7 +1091,7 @@ export default function PDV() {
 
               if (e.key === 'Escape' || e.key === 'ArrowUp' || e.key === 'ArrowDown' || (e.key === 'ArrowLeft' && displayPos === 0)) {
                 e.preventDefault(); e.stopPropagation();
-                setDateDigits(getTodayDigits());
+                setDateDigits(getTodayDigitsNow());
                 setDateError('');
                 const activeSidebarLink = document.querySelector('aside nav a[class*="bg-luxury-orange"]') as HTMLElement;
                 activeSidebarLink?.focus();
@@ -764,6 +1172,7 @@ export default function PDV() {
 
         <div className="glass-card px-4 py-2 flex gap-6 text-xs font-bold text-white/40">
           <span><span className="text-luxury-orange">F1</span> = Finalizar</span>
+          <span><span className="text-luxury-orange">F2</span> = Impressão</span>
           <span><span className="text-luxury-orange">TAB</span> = Alternar zona</span>
           <span><span className="text-luxury-orange">↑↓</span> = Navegar</span>
           <span><span className="text-luxury-orange">ENTER</span> = Adicionar / Editar</span>
@@ -815,7 +1224,7 @@ export default function PDV() {
               ) : null}
             </div>
             <div className="p-3 border-t border-white/5">
-              <button onClick={() => setStage('checkout')} disabled={cart.length === 0} className="btn-primary w-full h-10 text-sm uppercase disabled:opacity-30 disabled:grayscale">Finalizar Venda</button>
+              <button onClick={() => { setCheckoutSelected(getCheckoutDefaultSelection('dinheiro')); setStage('checkout'); }} disabled={cart.length === 0} className="btn-primary w-full h-10 text-sm uppercase disabled:opacity-30 disabled:grayscale">Finalizar Venda</button>
             </div>
           </div>
 
@@ -899,6 +1308,157 @@ export default function PDV() {
             </div>
           </div>, document.body
         )}
+
+        {showRecentPrintModal && createPortal(
+          <div className="fixed inset-0 z-[220] flex items-center justify-center p-6 bg-black/85 backdrop-blur-sm" onClick={e => { if (e.target === e.currentTarget) closeRecentPrintModal(); }}>
+            <div className="glass-card w-full max-w-3xl p-8" onClick={e => e.stopPropagation()}>
+              <div className="flex items-center justify-between mb-5">
+                <div>
+                  <h3 className="text-xl font-black italic text-luxury-orange uppercase">Últimas Vendas</h3>
+                  <p className="text-white/30 text-xs mt-1">Escolha uma venda e pressione ENTER para imprimir 1 via.</p>
+                </div>
+                <button onClick={closeRecentPrintModal} className="text-white/40 hover:text-white transition-colors">
+                  <X size={20} />
+                </button>
+              </div>
+
+              <div className="rounded-2xl border border-white/5 overflow-hidden">
+                <div className="grid grid-cols-[100px_190px_1fr_120px] gap-3 px-4 py-3 border-b border-white/5 text-[10px] uppercase tracking-widest text-white/30 font-bold">
+                  <span>ID</span>
+                  <span>Data</span>
+                  <span>Método</span>
+                  <span className="text-right">Total</span>
+                </div>
+
+                <div className="max-h-[340px] overflow-auto">
+                  {recentSalesLoading ? (
+                    <div className="px-4 py-10 text-center text-sm text-white/30 uppercase font-bold tracking-widest">Carregando vendas...</div>
+                  ) : recentSales.length === 0 ? (
+                    <div className="px-4 py-10 text-center text-sm text-white/30 uppercase font-bold tracking-widest">Nenhuma venda encontrada</div>
+                  ) : (
+                    recentSales.map((sale, index) => {
+                      const selected = selectedRecentSaleIndex === index;
+                      return (
+                        <button
+                          key={sale.id}
+                          type="button"
+                          onClick={() => setSelectedRecentSaleIndex(index)}
+                          onDoubleClick={() => { void openRecentPrintConfirm(sale); }}
+                          className={`grid w-full grid-cols-[100px_190px_1fr_120px] gap-3 px-4 py-3 text-left border-b border-white/5 transition-all ${
+                            selected
+                              ? "bg-luxury-orange/15 ring-1 ring-inset ring-luxury-orange/30"
+                              : "hover:bg-white/5"
+                          }`}
+                        >
+                          <span className="font-mono text-sm text-white/50">#{sale.id}</span>
+                          <span className="font-mono text-sm text-white/70">{formatSaleDateTime(sale.data_venda)}</span>
+                          <span className={`font-bold text-sm truncate ${getSalePaymentColor(sale.metodo_pagamento)}`}>{getSalePaymentLabel(sale)}</span>
+                          <span className="text-right font-black text-white">R$ {formatCurrency(sale.total_venda)}</span>
+                        </button>
+                      );
+                    })
+                  )}
+                </div>
+              </div>
+
+              <div className="mt-4 flex items-center justify-between text-[10px] uppercase tracking-widest text-white/30 font-bold">
+                <span>↑↓ Navegar</span>
+                <span>Enter Confirmar</span>
+                <span>Esc Fechar</span>
+              </div>
+            </div>
+          </div>, document.body
+        )}
+
+        {showRecentPrintModal && recentPrintConfirmSale && createPortal(
+          <div
+            className="fixed inset-0 z-[230] flex items-center justify-center p-6 bg-black/75 backdrop-blur-sm"
+            onClick={e => {
+              if (e.target === e.currentTarget) {
+                setRecentPrintConfirmSale(null);
+                setRecentPrintPreviewItems([]);
+              }
+            }}
+          >
+            <div className="glass-card w-full max-w-[640px] p-8 text-center" onClick={e => e.stopPropagation()}>
+              <div className="w-16 h-16 rounded-full bg-luxury-orange/10 flex items-center justify-center mx-auto mb-6 border border-luxury-orange/20">
+                <Printer size={30} className="text-luxury-orange" />
+              </div>
+
+              <h3 className="text-xl font-bold text-white uppercase mb-2 tracking-tight">Imprimir Venda</h3>
+              <p className="text-white/60 text-xs mb-6 uppercase tracking-[0.1em] leading-relaxed">
+                Deseja imprimir a venda selecionada?
+                <span className="text-luxury-orange text-lg font-extrabold block mt-2">Venda #{recentPrintConfirmSale.id}</span>
+                <span className={`block mt-1 normal-case tracking-normal font-bold ${getSalePaymentColor(recentPrintConfirmSale.metodo_pagamento)}`}>{getSalePaymentLabel(recentPrintConfirmSale)}</span>
+              </p>
+
+              <div className="bg-white/[0.03] rounded-2xl p-6 mb-8 border border-white/5 text-left">
+                <p className="text-[10px] text-white/20 uppercase font-bold mb-4 tracking-widest text-center">Resumo da Compra</p>
+                <div className="rounded-xl border border-white/5 bg-black/20 mb-4 overflow-hidden">
+                  <div className="grid grid-cols-[90px_1fr_120px] gap-3 px-4 py-3 border-b border-white/5 text-[10px] uppercase tracking-widest text-white/20 font-bold">
+                    <span>Quant.</span>
+                    <span>Item</span>
+                    <span className="text-right">Preço</span>
+                  </div>
+                  <div className="max-h-[220px] overflow-auto">
+                    {recentPrintPreviewLoading ? (
+                      <div className="px-4 py-8 text-center text-xs uppercase tracking-widest text-white/30 font-bold">Carregando itens...</div>
+                    ) : recentPrintPreviewItems.length === 0 ? (
+                      <div className="px-4 py-8 text-center text-xs uppercase tracking-widest text-white/30 font-bold">Nenhum item encontrado</div>
+                    ) : (
+                      recentPrintPreviewItems.map((item) => (
+                        <div
+                          key={item.id}
+                          className="grid grid-cols-[90px_1fr_120px] gap-3 px-4 py-3 border-b border-white/5 last:border-b-0"
+                        >
+                          <span className="font-mono text-sm text-luxury-orange">{item.quantidade}x</span>
+                          <span className="text-sm font-bold text-white/80 truncate">{item.produto_nome}</span>
+                          <span className="text-right text-sm font-black text-white">R$ {formatCurrency(item.preco_unitario)}</span>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+                <div className="rounded-xl border border-luxury-orange/20 bg-luxury-orange/5 px-4 py-3 text-center">
+                  <p className="text-[10px] text-white/20 uppercase font-bold mb-1 tracking-widest">Total</p>
+                  <p className="text-3xl font-bold italic text-luxury-orange tracking-tighter">
+                    R$ {recentPrintConfirmSale.total_venda.toFixed(2)}
+                  </p>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setRecentPrintConfirmSale(null);
+                    setRecentPrintPreviewItems([]);
+                  }}
+                  className={`h-12 rounded-xl font-bold uppercase text-[10px] tracking-widest transition-all ${
+                    recentPrintActionSelected === "cancel"
+                      ? "bg-red-600 text-white ring-2 ring-white/50 shadow-lg shadow-red-600/20 scale-[1.02]"
+                      : "bg-red-600/10 text-red-400 border border-red-500/10 hover:bg-red-600/20"
+                  }`}
+                >
+                  CANCELAR (ESC)
+                </button>
+                <button
+                  type="button"
+                  disabled={printingRecentSale}
+                  onClick={() => handleManualPrintSale(recentPrintConfirmSale)}
+                  className={`h-12 rounded-xl font-bold italic uppercase tracking-widest text-[10px] transition-all disabled:opacity-50 ${
+                    recentPrintActionSelected === "print"
+                      ? "bg-luxury-orange text-white ring-2 ring-white/20 shadow-lg shadow-luxury-orange/30 scale-[1.02]"
+                      : "bg-luxury-orange/20 text-luxury-orange/60"
+                  }`}
+                >
+                  IMPRIMIR (ENTER)
+                </button>
+              </div>
+            </div>
+          </div>, document.body
+        )}
+        {vendaSuccessToast}
       </div>
     );
   }
@@ -925,8 +1485,6 @@ export default function PDV() {
             <div className="glass-card flex-1 px-5 py-4"><p className="text-[10px] uppercase text-white/40 font-bold mb-1">Data</p><p className="text-lg font-black">{vendaDate}</p></div>
             <div className="glass-card flex-[2] px-5 py-4 border border-luxury-orange/30 bg-luxury-orange/5"><p className="text-[10px] uppercase text-white/40 font-bold mb-1">Total a Pagar</p><p className="text-3xl font-black text-luxury-orange">R$ {total.toFixed(2)}</p></div>
           </div>
-
-          {vendaSuccess && <div className="px-4 py-3 rounded-xl bg-green-500/10 border border-green-500/20 text-green-400 font-bold text-sm">{vendaSuccess}</div>}
 
           <div>
             <p className="text-[10px] uppercase text-white/40 font-bold mb-3 px-1">Forma de Pagamento</p>
@@ -1057,6 +1615,88 @@ export default function PDV() {
         </div>,
         document.body
       )}
+
+      {showCashConfirm && createPortal(
+        <div
+          className="fixed inset-0 z-[300] flex items-center justify-center p-6 bg-black/90 backdrop-blur-md"
+          onClick={e => { if (e.target === e.currentTarget) closeCashConfirm(); }}
+        >
+          <div
+            className="glass-card w-full max-w-[420px] p-8 text-center animate-in zoom-in duration-200 border-white/10"
+            onClick={e => e.stopPropagation()}
+            onKeyDown={e => {
+              e.stopPropagation();
+              if (e.key === "Escape") {
+                e.preventDefault();
+                closeCashConfirm();
+                return;
+              }
+              if (e.key === "Enter" && cashSummary.isEnough) {
+                e.preventDefault();
+                handleFinalize("dinheiro");
+              }
+            }}
+          >
+            <div className="w-16 h-16 rounded-full bg-luxury-orange/10 flex items-center justify-center mx-auto mb-6 border border-luxury-orange/20">
+              <Banknote size={32} className="text-luxury-orange" />
+            </div>
+
+            <h3 className="text-xl font-bold text-white uppercase mb-2 tracking-tight">Pagamento em Dinheiro</h3>
+            <p className="text-white/60 text-xs mb-6 uppercase tracking-[0.1em]">Informe quanto o cliente pagou</p>
+
+            <div className="grid grid-cols-2 gap-3 mb-4 text-left">
+              <div className="bg-white/[0.03] rounded-2xl p-4 border border-white/5">
+                <p className="text-[10px] text-white/20 uppercase font-bold mb-1 tracking-widest">Total</p>
+                <p className="text-2xl font-bold italic text-luxury-orange">R$ {total.toFixed(2)}</p>
+              </div>
+              <div className="bg-white/[0.03] rounded-2xl p-4 border border-white/5">
+                <p className="text-[10px] text-white/20 uppercase font-bold mb-1 tracking-widest">Troco</p>
+                <p className="text-2xl font-bold italic text-green-400">R$ {cashSummary.troco.toFixed(2)}</p>
+              </div>
+            </div>
+
+            <div className="mb-6 text-left">
+              <label className="text-[10px] uppercase text-white/30 font-bold mb-2 block tracking-widest">Valor Pago</label>
+              <input
+                ref={cashPaidRef}
+                type="text"
+                value={cashPaidInput}
+                onChange={e => setCashPaidInput(handleCurrencyInput(e.target.value))}
+                className="luxury-input w-full h-14 text-center text-2xl font-black text-luxury-orange"
+              />
+              {!cashSummary.isEnough && (
+                <p className="text-red-400 text-xs mt-3 font-bold uppercase tracking-[0.1em]">
+                  Faltam R$ {cashSummary.falta.toFixed(2)}
+                </p>
+              )}
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <button
+                type="button"
+                onClick={closeCashConfirm}
+                className="h-12 rounded-xl font-bold uppercase text-[10px] tracking-widest bg-red-600/10 text-red-400 border border-red-500/10 hover:bg-red-600/20 transition-all"
+              >
+                CANCELAR (ESC)
+              </button>
+              <button
+                type="button"
+                disabled={!cashSummary.isEnough}
+                onClick={() => handleFinalize("dinheiro")}
+                className={`h-12 rounded-xl font-bold italic uppercase tracking-widest text-[10px] transition-all ${
+                  cashSummary.isEnough
+                    ? "bg-luxury-orange text-white ring-2 ring-white/20 shadow-lg shadow-luxury-orange/30"
+                    : "bg-white/10 text-white/30 cursor-not-allowed"
+                }`}
+              >
+                CONFIRMAR (ENTER)
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
+      {vendaSuccessToast}
       </>
     );
   }

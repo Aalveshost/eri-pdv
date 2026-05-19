@@ -261,13 +261,126 @@ async fn salvar_temp_html(conteudo: String) -> Result<(), String> {
     Ok(())
 }
 
+#[tauri::command]
+async fn imprimir_padrao_direto(
+    nome: String,
+    conteudo: String,
+    copias: Option<u32>,
+    cortar: Option<bool>,
+) -> Result<(), String> {
+    use std::io::Write;
+
+    let dir = std::env::temp_dir();
+    let safe_name = if nome.trim().is_empty() { "impressao_eri.txt".to_string() } else { nome };
+    let path = dir.join(safe_name);
+    let copies = copias.unwrap_or(1).max(1);
+    let should_cut = cortar.unwrap_or(false);
+
+    let mut file = fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true)
+        .open(&path)
+        .map_err(|e| format!("Erro ao criar temp: {}", e))?;
+
+    file.write_all(conteudo.as_bytes())
+        .map_err(|e| format!("Erro ao escrever: {}", e))?;
+
+    #[cfg(target_os = "macos")]
+    {
+        let status = std::process::Command::new("lp")
+            .arg("-n")
+            .arg(copies.to_string())
+            .arg(&path)
+            .status()
+            .map_err(|e| format!("Erro ao enviar para impressora: {}", e))?;
+
+        if !status.success() {
+            return Err("Falha ao imprimir na impressora padrao.".to_string());
+        }
+
+        if should_cut {
+            let _ = tentar_corte_macos(&dir);
+        }
+
+        return Ok(());
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        let path_str = path.to_string_lossy().to_string();
+        for _ in 0..copies {
+            let status = std::process::Command::new("notepad.exe")
+                .args(["/p", &path_str])
+                .status()
+                .map_err(|e| format!("Erro ao enviar para impressora: {}", e))?;
+
+            if !status.success() {
+                return Err("Falha ao imprimir na impressora padrao.".to_string());
+            }
+        }
+
+        return Ok(());
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    {
+        Err("Impressão direta não suportada neste sistema.".to_string())
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn tentar_corte_macos(dir: &std::path::Path) -> Result<(), String> {
+    use std::io::Write;
+
+    let output = std::process::Command::new("lpstat")
+        .arg("-d")
+        .output()
+        .map_err(|e| format!("Erro ao consultar impressora padrão: {}", e))?;
+
+    if !output.status.success() {
+        return Ok(());
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let printer_name = stdout
+        .split(':')
+        .nth(1)
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+
+    let Some(printer_name) = printer_name else {
+        return Ok(());
+    };
+
+    let cut_path = dir.join("eri_cut_command.bin");
+    let mut cut_file = fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true)
+        .open(&cut_path)
+        .map_err(|e| format!("Erro ao criar comando de corte: {}", e))?;
+
+    // ESC/POS: GS V 0
+    cut_file
+        .write_all(&[0x1D, 0x56, 0x00])
+        .map_err(|e| format!("Erro ao escrever comando de corte: {}", e))?;
+
+    let _ = std::process::Command::new("lp")
+        .args(["-d", &printer_name, "-o", "raw"])
+        .arg(&cut_path)
+        .status();
+
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_sql::Builder::new().build())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![check_and_run_backup, import_backup, log_debug, open_whatsapp, salvar_txt, salvar_txt_temp, deletar_arquivo, copiar_arquivo_clipboard, imprimir_html, executar_impressao, salvar_temp_html])
+        .invoke_handler(tauri::generate_handler![check_and_run_backup, import_backup, log_debug, open_whatsapp, salvar_txt, salvar_txt_temp, deletar_arquivo, copiar_arquivo_clipboard, imprimir_html, executar_impressao, salvar_temp_html, imprimir_padrao_direto])
         .setup(|app| {
             use tauri::Manager;
             if let Some(window) = app.get_webview_window("main") {

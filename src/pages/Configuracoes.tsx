@@ -10,6 +10,7 @@ import {
   normalizeStoredAccessPassword,
   sanitizeAccessPassword,
 } from "../utils/accessPassword";
+import { normalizePrintConfigRow } from "./pdvPrintFlow";
 
 let configShouldFocusOnMount = false;
 export const setConfigShouldFocusOnMount = (val: boolean) => { configShouldFocusOnMount = val; };
@@ -22,7 +23,10 @@ export default function Configuracoes() {
     caminho_backup_externo: "",
     nome_loja: "Salgados Pro",
     frequencia_backup_dias: 7,
-    senha: DEFAULT_ACCESS_PASSWORD
+    senha: DEFAULT_ACCESS_PASSWORD,
+    impressao_automatica: false,
+    impressao_vias: 1,
+    impressao_corte: false,
   });
   const [showPassword, setShowPassword] = useState(false);
   const [showSuccess, setShowSuccess] = useState(false);
@@ -31,6 +35,9 @@ export default function Configuracoes() {
   const fSenhaRef = useRef<HTMLInputElement>(null);
   const fCaminhoRef = useRef<HTMLInputElement>(null);
   const fFreqRef = useRef<HTMLSelectElement>(null);
+  const fPrintAutoRef = useRef<HTMLInputElement>(null);
+  const fPrintCopiesRef = useRef<HTMLInputElement>(null);
+  const fPrintCutRef = useRef<HTMLInputElement>(null);
   const fBackupBtnRef = useRef<HTMLButtonElement>(null);
   const fImportBtnRef = useRef<HTMLButtonElement>(null);
   const fSalvarBtnRef = useRef<HTMLButtonElement>(null);
@@ -39,8 +46,11 @@ export default function Configuracoes() {
     nome: { down: fSenhaRef, right: fCaminhoRef },
     senha: { up: fNomeRef, right: fFreqRef, down: fBackupBtnRef },
     caminho: { left: fNomeRef, down: fFreqRef },
-    freq: { up: fCaminhoRef, left: fSenhaRef, down: fBackupBtnRef, right: fBackupBtnRef },
-    backup: { up: fFreqRef, left: fSenhaRef, down: fImportBtnRef },
+    freq: { up: fCaminhoRef, left: fSenhaRef, down: fPrintAutoRef, right: fPrintAutoRef },
+    print_auto: { up: fFreqRef, down: fPrintCopiesRef },
+    print_copies: { up: fPrintAutoRef, down: fPrintCutRef },
+    print_cut: { up: fPrintCopiesRef, down: fBackupBtnRef },
+    backup: { up: fPrintCutRef, left: fSenhaRef, down: fImportBtnRef },
     import: { up: fBackupBtnRef, left: fSenhaRef, down: fSalvarBtnRef },
     salvar: { up: fImportBtnRef, left: fImportBtnRef }
   };
@@ -83,6 +93,14 @@ export default function Configuracoes() {
     const nav = navMap[field];
     if (!nav) return;
 
+    if ((field === 'print_auto' || field === 'print_cut') && isEnter) {
+      e.preventDefault();
+      e.stopPropagation();
+      const input = e.currentTarget as HTMLInputElement;
+      input.click();
+      return;
+    }
+
     let target = null;
     if (e.key === 'ArrowUp' || (isTab && e.shiftKey)) target = nav.up;
     else if (e.key === 'ArrowDown' || (isTab && !e.shiftKey)) target = nav.down;
@@ -107,12 +125,16 @@ export default function Configuracoes() {
     try {
       const res: any[] = await db.select("SELECT * FROM configuracoes WHERE id = 1");
       if (res.length > 0) {
+        const printConfig = normalizePrintConfigRow(res[0]);
         setForm({
           dias_alerta_validade: res[0].dias_alerta_validade,
           caminho_backup_externo: res[0].caminho_backup_externo || "",
           nome_loja: res[0].nome_loja || "Salgados Pro",
           frequencia_backup_dias: res[0].frequencia_backup_dias || 7,
-          senha: normalizeStoredAccessPassword(res[0].senha)
+          senha: normalizeStoredAccessPassword(res[0].senha),
+          impressao_automatica: printConfig.autoPrintEnabled,
+          impressao_vias: printConfig.autoPrintCopies,
+          impressao_corte: printConfig.cutPaperEnabled,
         });
       }
     } catch (err) {
@@ -163,8 +185,17 @@ export default function Configuracoes() {
 
     try {
       await db.execute(
-        "UPDATE configuracoes SET dias_alerta_validade = $1, caminho_backup_externo = $2, nome_loja = $3, frequencia_backup_dias = $4, senha = $5 WHERE id = 1",
-        [form.dias_alerta_validade, form.caminho_backup_externo, form.nome_loja, form.frequencia_backup_dias, form.senha]
+        "UPDATE configuracoes SET dias_alerta_validade = $1, caminho_backup_externo = $2, nome_loja = $3, frequencia_backup_dias = $4, senha = $5, impressao_automatica = $6, impressao_vias = $7, impressao_corte = $8 WHERE id = 1",
+        [
+          form.dias_alerta_validade,
+          form.caminho_backup_externo,
+          form.nome_loja,
+          form.frequencia_backup_dias,
+          form.senha,
+          form.impressao_automatica ? 1 : 0,
+          Math.max(1, form.impressao_vias || 1),
+          form.impressao_corte ? 1 : 0,
+        ]
       );
       
       setShowSuccess(true);
@@ -333,6 +364,64 @@ export default function Configuracoes() {
             </label>
 
             <div className="pt-4 border-t border-white/5 space-y-4">
+              <div className="rounded-2xl border border-white/5 bg-white/[0.03] p-4 space-y-4">
+                <div>
+                  <p className="text-xs uppercase tracking-widest text-white/40 font-bold">Impressao de Venda</p>
+                  <p className="text-[10px] text-white/20 mt-1 italic">Essas opcoes valem apenas para a impressao automatica ao concluir a venda.</p>
+                </div>
+
+                <label className={cn(
+                  "flex items-center justify-between gap-4 rounded-xl border px-4 py-3 transition-all",
+                  form.impressao_automatica ? "border-luxury-orange/30 bg-luxury-orange/10" : "border-white/5 bg-black/10"
+                )}>
+                  <div>
+                    <span className="text-xs uppercase tracking-widest text-white/40 font-bold block">Impressao automatica</span>
+                    <span className="text-[10px] text-white/20 italic">Imprime sozinho ao finalizar a venda.</span>
+                  </div>
+                  <input
+                    ref={fPrintAutoRef}
+                    type="checkbox"
+                    checked={form.impressao_automatica}
+                    onChange={e => setForm({ ...form, impressao_automatica: e.target.checked })}
+                    onKeyDown={e => handleNav(e, 'print_auto')}
+                    className="h-5 w-5 accent-[#ff7a00]"
+                  />
+                </label>
+
+                <label className="block">
+                  <span className="text-xs uppercase tracking-widest text-white/40 font-bold mb-2 block">Quantidade de vias automaticas</span>
+                  <input
+                    ref={fPrintCopiesRef}
+                    type="number"
+                    min={1}
+                    max={10}
+                    value={form.impressao_vias}
+                    disabled={!form.impressao_automatica}
+                    onChange={e => setForm({ ...form, impressao_vias: Math.max(1, Number(e.target.value) || 1) })}
+                    onKeyDown={e => handleNav(e, 'print_copies')}
+                    className="luxury-input w-full h-12 disabled:opacity-40"
+                  />
+                </label>
+
+                <label className={cn(
+                  "flex items-center justify-between gap-4 rounded-xl border px-4 py-3 transition-all",
+                  form.impressao_corte ? "border-luxury-orange/30 bg-luxury-orange/10" : "border-white/5 bg-black/10"
+                )}>
+                  <div>
+                    <span className="text-xs uppercase tracking-widest text-white/40 font-bold block">Corte ao final</span>
+                    <span className="text-[10px] text-white/20 italic">Envia comando de guilhotina quando houver suporte.</span>
+                  </div>
+                  <input
+                    ref={fPrintCutRef}
+                    type="checkbox"
+                    checked={form.impressao_corte}
+                    onChange={e => setForm({ ...form, impressao_corte: e.target.checked })}
+                    onKeyDown={e => handleNav(e, 'print_cut')}
+                    className="h-5 w-5 accent-[#ff7a00]"
+                  />
+                </label>
+              </div>
+
               <button
                 ref={fBackupBtnRef}
                 onClick={handleManualBackup}
