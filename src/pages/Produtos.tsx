@@ -6,6 +6,11 @@ import Modal from "../components/Modal";
 import { handleCurrencyInput, parseCurrencyToNumber, formatCurrency } from "../utils/currency";
 import { normalizeText } from "../utils/text";
 import { cn } from "../utils/cn";
+import {
+  applyProdutoInactivationState,
+  getProdutoDeleteModalLabels,
+  inactivateProdutoById,
+} from "./produtosDeleteFlow";
 
 interface Produto {
   id: number;
@@ -19,6 +24,7 @@ interface Produto {
 
 export default function Produtos() {
   const { db, error: dbError } = useDatabase();
+  const deleteModalLabels = getProdutoDeleteModalLabels();
   const [produtos, setProdutos] = useState<Produto[]>([]);
   const [search, setSearch] = useState("");
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -78,7 +84,7 @@ export default function Produtos() {
   const loadProdutos = async () => {
     if (!db) return;
     try {
-      const res: any[] = await db.select("SELECT * FROM produtos ORDER BY nome ASC");
+      const res: any[] = await db.select("SELECT * FROM produtos WHERE ativo = 1 ORDER BY nome ASC");
       setProdutos(res);
     } catch (err) {
       console.error("Erro ao carregar produtos:", err);
@@ -302,13 +308,20 @@ export default function Produtos() {
 
   const handleDelete = async () => {
     if (!db || !deleteConfirm) return;
+    const produtoId = deleteConfirm.id;
     try {
-      await db.execute("DELETE FROM produtos WHERE id = $1", [deleteConfirm.id]);
+      await inactivateProdutoById(db, produtoId);
+      setProdutos((current) => applyProdutoInactivationState(current, produtoId));
+      setSelectedRowIdx((current) => {
+        const nextLength = filteredProdutos.filter((produto) => produto.id !== produtoId).length;
+        if (nextLength === 0) return -1;
+        return Math.min(current, nextLength - 1);
+      });
       setDeleteConfirm(null);
-      loadProdutos();
+      await loadProdutos();
     } catch (err) {
       setDeleteConfirm(null);
-      setFormError("Erro ao excluir.");
+      setFormError("Erro ao inativar.");
     }
   };
 
@@ -584,19 +597,19 @@ export default function Produtos() {
             <div className="w-16 h-16 rounded-full bg-red-500/10 flex items-center justify-center mx-auto mb-6 border border-red-500/20">
               <Trash2 size={32} className="text-red-500" />
             </div>
-            <h3 className="text-xl font-bold text-white uppercase mb-2 tracking-tight">Excluir Produto</h3>
+            <h3 className="text-xl font-bold text-white uppercase mb-2 tracking-tight">Inativar Produto</h3>
             <p className="text-white/40 text-xs mb-6 uppercase tracking-[0.1em] leading-relaxed">
-              Você está prestes a excluir permanentemente: <br/>
+              Este produto sera ocultado dos lancamentos e da lista de produtos: <br/>
               <span className="text-red-400 font-bold block mt-1">{deleteConfirm.nome}</span>
             </p>
-            
+
             <div className="grid grid-cols-2 gap-3">
               <button
                 data-delete-btn
-                onClick={() => setDeleteConfirm(null)}
+                onClick={() => { setDeleteConfirm(null); }}
                 className="h-12 border border-white/5 rounded-xl font-bold uppercase text-[9px] tracking-widest text-white/30 hover:text-white hover:bg-white/5 transition-all focus:ring-2 focus:ring-white/50 outline-none"
               >
-                CANCELAR (ESC)
+                {deleteModalLabels.cancel}
               </button>
               <button
                 data-delete-btn
@@ -604,7 +617,7 @@ export default function Produtos() {
                 onClick={handleDelete}
                 className="w-full h-12 rounded-xl border border-white/10 hover:bg-red-500/10 hover:border-red-500/50 hover:text-red-500 focus:bg-red-500/10 focus:border-red-500/50 focus:text-red-500 outline-none transition-all font-bold uppercase text-xs tracking-widest"
               >
-                Cancelar
+                {deleteModalLabels.confirm}
               </button>
             </div>
           </div>
