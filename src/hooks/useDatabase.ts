@@ -13,7 +13,8 @@ CREATE TABLE IF NOT EXISTS configuracoes (
     senha TEXT DEFAULT '1234',
     impressao_automatica INTEGER DEFAULT 0,
     impressao_vias INTEGER DEFAULT 1,
-    impressao_corte INTEGER DEFAULT 0
+    impressao_corte INTEGER DEFAULT 0,
+    impressao_largura_mm INTEGER DEFAULT 58
 );
 
 INSERT OR IGNORE INTO configuracoes (id, dias_alerta_validade, nome_loja) VALUES (1, 5, 'Salgados Pro');
@@ -159,6 +160,7 @@ export function useDatabase() {
             "ALTER TABLE configuracoes ADD COLUMN impressao_automatica INTEGER DEFAULT 0",
             "ALTER TABLE configuracoes ADD COLUMN impressao_vias INTEGER DEFAULT 1",
             "ALTER TABLE configuracoes ADD COLUMN impressao_corte INTEGER DEFAULT 0",
+            "ALTER TABLE configuracoes ADD COLUMN impressao_largura_mm INTEGER DEFAULT 58",
             "ALTER TABLE venda_itens ADD COLUMN preco_custo REAL DEFAULT 0",
             // Surgery to make lote_id nullable in existing databases
             "CREATE TABLE IF NOT EXISTS venda_itens_new (id INTEGER PRIMARY KEY AUTOINCREMENT, venda_id INTEGER NOT NULL, produto_id INTEGER NOT NULL, lote_id INTEGER, quantidade INTEGER NOT NULL, preco_unitario REAL NOT NULL, preco_custo REAL NOT NULL DEFAULT 0, FOREIGN KEY (venda_id) REFERENCES vendas(id), FOREIGN KEY (produto_id) REFERENCES produtos(id), FOREIGN KEY (lote_id) REFERENCES lotes(id))",

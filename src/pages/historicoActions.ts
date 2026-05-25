@@ -16,6 +16,8 @@ export interface HistoricoPrintPayload {
   itens: HistoricoPrintItem[];
 }
 
+export type HistoricoPaperWidth = 58 | 80;
+
 export interface HistoricoActionMeta {
   titulo: string;
   descricao: string;
@@ -96,8 +98,8 @@ export function buildHistoricoPrintHtml(payload: HistoricoPrintPayload) {
   </body></html>`;
 }
 
-export function buildHistoricoPrintText(payload: HistoricoPrintPayload) {
-  const sep = "-".repeat(40);
+export function buildHistoricoPrintText(payload: HistoricoPrintPayload, paperWidth: HistoricoPaperWidth = 58) {
+  const sep = "-".repeat(paperWidth === 80 ? 48 : 32);
   const itens = payload.itens.length > 0
     ? payload.itens.map((item) => {
         const unit = formatMoney(item.valorUnitario ?? item.valorTotal);

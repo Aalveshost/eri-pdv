@@ -3,7 +3,10 @@ import {
   getAutoPrintCopies,
   getManualPrintCopies,
   getNextRecentSaleIndex,
+  getPostFinalizePrintDefaultAction,
+  getPostFinalizePrintNextAction,
   normalizePrintConfigRow,
+  shouldOfferPostFinalizePrint,
 } from "./pdvPrintFlow";
 
 describe("pdv print flow", () => {
@@ -12,6 +15,7 @@ describe("pdv print flow", () => {
       autoPrintEnabled: false,
       autoPrintCopies: 1,
       cutPaperEnabled: false,
+      paperWidth: 58,
     });
   });
 
@@ -21,11 +25,13 @@ describe("pdv print flow", () => {
         impressao_automatica: 1,
         impressao_vias: 3,
         impressao_corte: 1,
+        impressao_largura_mm: 80,
       }),
     ).toEqual({
       autoPrintEnabled: true,
       autoPrintCopies: 3,
       cutPaperEnabled: true,
+      paperWidth: 80,
     });
   });
 
@@ -34,11 +40,13 @@ describe("pdv print flow", () => {
       normalizePrintConfigRow({
         impressao_automatica: 1,
         impressao_vias: 0,
+        impressao_largura_mm: 99,
       }),
     ).toEqual({
       autoPrintEnabled: true,
       autoPrintCopies: 1,
       cutPaperEnabled: false,
+      paperWidth: 58,
     });
   });
 
@@ -48,6 +56,7 @@ describe("pdv print flow", () => {
         autoPrintEnabled: true,
         autoPrintCopies: 2,
         cutPaperEnabled: false,
+        paperWidth: 58,
       }),
     ).toBe(2);
 
@@ -56,12 +65,44 @@ describe("pdv print flow", () => {
         autoPrintEnabled: false,
         autoPrintCopies: 4,
         cutPaperEnabled: true,
+        paperWidth: 80,
       }),
     ).toBe(0);
   });
 
   it("keeps manual reprint fixed at one copy", () => {
     expect(getManualPrintCopies()).toBe(1);
+  });
+
+  it("offers post-finalize print confirmation only when auto print is enabled", () => {
+    expect(
+      shouldOfferPostFinalizePrint({
+        autoPrintEnabled: true,
+        autoPrintCopies: 1,
+        cutPaperEnabled: false,
+        paperWidth: 58,
+      }),
+    ).toBe(true);
+
+    expect(
+      shouldOfferPostFinalizePrint({
+        autoPrintEnabled: false,
+        autoPrintCopies: 3,
+        cutPaperEnabled: true,
+        paperWidth: 80,
+      }),
+    ).toBe(false);
+  });
+
+  it("defaults the post-finalize print action to print", () => {
+    expect(getPostFinalizePrintDefaultAction()).toBe("print");
+  });
+
+  it("switches post-finalize print action with left and right arrows", () => {
+    expect(getPostFinalizePrintNextAction("print", "ArrowLeft")).toBe("close");
+    expect(getPostFinalizePrintNextAction("close", "ArrowRight")).toBe("print");
+    expect(getPostFinalizePrintNextAction("print", "ArrowRight")).toBe("print");
+    expect(getPostFinalizePrintNextAction("close", "ArrowLeft")).toBe("close");
   });
 
   it("moves through recent sales with arrow keys without leaving bounds", () => {

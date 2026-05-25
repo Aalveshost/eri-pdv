@@ -27,6 +27,7 @@ export default function Configuracoes() {
     impressao_automatica: false,
     impressao_vias: 1,
     impressao_corte: false,
+    impressao_largura_mm: 58 as 58 | 80,
   });
   const [showPassword, setShowPassword] = useState(false);
   const [showSuccess, setShowSuccess] = useState(false);
@@ -37,6 +38,7 @@ export default function Configuracoes() {
   const fFreqRef = useRef<HTMLSelectElement>(null);
   const fPrintAutoRef = useRef<HTMLInputElement>(null);
   const fPrintCopiesRef = useRef<HTMLInputElement>(null);
+  const fPrintWidthRef = useRef<HTMLSelectElement>(null);
   const fPrintCutRef = useRef<HTMLInputElement>(null);
   const fBackupBtnRef = useRef<HTMLButtonElement>(null);
   const fImportBtnRef = useRef<HTMLButtonElement>(null);
@@ -48,8 +50,9 @@ export default function Configuracoes() {
     caminho: { left: fNomeRef, down: fFreqRef },
     freq: { up: fCaminhoRef, left: fSenhaRef, down: fPrintAutoRef, right: fPrintAutoRef },
     print_auto: { up: fFreqRef, down: fPrintCopiesRef },
-    print_copies: { up: fPrintAutoRef, down: fPrintCutRef },
-    print_cut: { up: fPrintCopiesRef, down: fBackupBtnRef },
+    print_copies: { up: fPrintAutoRef, down: fPrintWidthRef },
+    print_width: { up: fPrintCopiesRef, down: fPrintCutRef },
+    print_cut: { up: fPrintWidthRef, down: fBackupBtnRef },
     backup: { up: fPrintCutRef, left: fSenhaRef, down: fImportBtnRef },
     import: { up: fBackupBtnRef, left: fSenhaRef, down: fSalvarBtnRef },
     salvar: { up: fImportBtnRef, left: fImportBtnRef }
@@ -135,6 +138,7 @@ export default function Configuracoes() {
           impressao_automatica: printConfig.autoPrintEnabled,
           impressao_vias: printConfig.autoPrintCopies,
           impressao_corte: printConfig.cutPaperEnabled,
+          impressao_largura_mm: printConfig.paperWidth,
         });
       }
     } catch (err) {
@@ -185,7 +189,7 @@ export default function Configuracoes() {
 
     try {
       await db.execute(
-        "UPDATE configuracoes SET dias_alerta_validade = $1, caminho_backup_externo = $2, nome_loja = $3, frequencia_backup_dias = $4, senha = $5, impressao_automatica = $6, impressao_vias = $7, impressao_corte = $8 WHERE id = 1",
+        "UPDATE configuracoes SET dias_alerta_validade = $1, caminho_backup_externo = $2, nome_loja = $3, frequencia_backup_dias = $4, senha = $5, impressao_automatica = $6, impressao_vias = $7, impressao_corte = $8, impressao_largura_mm = $9 WHERE id = 1",
         [
           form.dias_alerta_validade,
           form.caminho_backup_externo,
@@ -195,6 +199,7 @@ export default function Configuracoes() {
           form.impressao_automatica ? 1 : 0,
           Math.max(1, form.impressao_vias || 1),
           form.impressao_corte ? 1 : 0,
+          form.impressao_largura_mm,
         ]
       );
       
@@ -402,6 +407,21 @@ export default function Configuracoes() {
                     onKeyDown={e => handleNav(e, 'print_copies')}
                     className="luxury-input w-full h-12 disabled:opacity-40"
                   />
+                </label>
+
+                <label className="block">
+                  <span className="text-xs uppercase tracking-widest text-white/40 font-bold mb-2 block">Largura do papel</span>
+                  <select
+                    ref={fPrintWidthRef}
+                    value={form.impressao_largura_mm}
+                    onChange={e => setForm({ ...form, impressao_largura_mm: Number(e.target.value) === 80 ? 80 : 58 })}
+                    onKeyDown={e => handleNav(e, 'print_width')}
+                    className="luxury-input w-full h-12"
+                  >
+                    <option value={58}>58 mm</option>
+                    <option value={80}>80 mm</option>
+                  </select>
+                  <span className="text-[10px] text-white/20 mt-1 block italic">Define a largura usada no layout do cupom impresso.</span>
                 </label>
 
                 <label className={cn(

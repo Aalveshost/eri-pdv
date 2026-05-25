@@ -421,6 +421,11 @@ export default function Historico() {
     setActionTarget(null);
     setPrintToast("Imprimindo...");
     try {
+      const configRows: any[] = await db.select(
+        "SELECT impressao_largura_mm FROM configuracoes WHERE id = 1",
+      );
+      const paperWidth = Number(configRows[0]?.impressao_largura_mm) === 80 ? 80 : 58;
+
       if (target.kind === "todas") {
         const venda = vendas.find(v => v.id === target.id);
         if (!venda) return;
@@ -438,7 +443,7 @@ export default function Historico() {
               valorUnitario: item.preco_unitario,
               valorTotal: item.quantidade * item.preco_unitario,
             })),
-          }),
+          }, paperWidth),
           copias: 1,
           cortar: false,
         });
@@ -459,7 +464,7 @@ export default function Historico() {
               valorUnitario: item.quantidade > 0 ? item.valor_total / item.quantidade : item.valor_total,
               valorTotal: item.valor_total,
             })),
-          }),
+          }, paperWidth),
           copias: 1,
           cortar: false,
         });

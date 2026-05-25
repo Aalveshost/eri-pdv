@@ -76,4 +76,27 @@ describe("historico actions", () => {
     expect(text).toContain("1x COCA COLA 350ML");
     expect(text).toContain("Total: R$ 35,02");
   });
+
+  it("builds narrower text output for 58 mm and wider output for 80 mm", () => {
+    const payload = {
+      titulo: "Venda #15",
+      subtitulo: "Pagamento em Dinheiro",
+      dataVenda: "19/05/2026 12:24",
+      total: 35.02,
+      itens: [
+        {
+          descricao: "COCA COLA 350ML",
+          quantidade: 1,
+          valorUnitario: 10,
+          valorTotal: 10,
+        },
+      ],
+    };
+
+    const text58 = buildHistoricoPrintText(payload, 58);
+    const text80 = buildHistoricoPrintText(payload, 80);
+
+    expect(text58).toContain("-".repeat(32));
+    expect(text80).toContain("-".repeat(48));
+  });
 });

@@ -10,7 +10,17 @@ import { formatCurrency, parseCurrencyToNumber, handleCurrencyInput, handleWeigh
 import { buildHistoricoPrintText } from "./historicoActions";
 import { getCashPaymentSummary } from "./pdvCashFlow";
 import { formatDateBR, getCashCheckoutCancelState, getCashCheckoutOpenState, getCheckoutDefaultSelection, getPostFinalizeVendaState, getTodayDigits, getVendaSuccessToastTiming } from "./pdvFlow";
-import { getAutoPrintCopies, getManualPrintCopies, getNextRecentSaleIndex, normalizePrintConfigRow, type PrintConfig } from "./pdvPrintFlow";
+import {
+  getAutoPrintCopies,
+  getManualPrintCopies,
+  getNextRecentSaleIndex,
+  getPostFinalizePrintDefaultAction,
+  getPostFinalizePrintNextAction,
+  normalizePrintConfigRow,
+  shouldOfferPostFinalizePrint,
+  type PostFinalizePrintAction,
+  type PrintConfig,
+} from "./pdvPrintFlow";
 
 // Module-level flag: set by Layout when user presses Enter on PDV sidebar link
 // Checked on mount to decide whether to auto-focus the date input
@@ -52,6 +62,13 @@ interface RecentSaleItem {
 
 interface PrintConfigWithStore extends PrintConfig {
   nomeLoja: string;
+}
+
+interface PostFinalizePrintJob {
+  sale: Pick<RecentSale, "id" | "metodo_pagamento" | "cliente_nome" | "data_venda" | "total_venda">;
+  itens: Array<{ descricao: string; quantidade: number; valorUnitario: number; valorTotal: number }>;
+  config: PrintConfigWithStore;
+  copies: number;
 }
 
 const PAYMENT_LABELS: Record<string, string> = {
@@ -146,6 +163,9 @@ export default function PDV() {
   const [recentPrintPreviewLoading, setRecentPrintPreviewLoading] = useState(false);
   const [recentPrintActionSelected, setRecentPrintActionSelected] = useState<"print" | "cancel">("print");
   const [printingRecentSale, setPrintingRecentSale] = useState(false);
+  const [postFinalizePrintJob, setPostFinalizePrintJob] = useState<PostFinalizePrintJob | null>(null);
+  const [postFinalizePrintActionSelected, setPostFinalizePrintActionSelected] = useState<PostFinalizePrintAction>(getPostFinalizePrintDefaultAction());
+  const [printingPostFinalizeSale, setPrintingPostFinalizeSale] = useState(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const dateInputRef = useRef<HTMLInputElement>(null);
   const modalQuantityRef = useRef<HTMLInputElement>(null);
@@ -197,11 +217,12 @@ export default function PDV() {
         autoPrintEnabled: false,
         autoPrintCopies: 1,
         cutPaperEnabled: false,
+        paperWidth: 58,
       };
     }
 
     const rows: any[] = await db.select(
-      "SELECT nome_loja, impressao_automatica, impressao_vias, impressao_corte FROM configuracoes WHERE id = 1",
+      "SELECT nome_loja, impressao_automatica, impressao_vias, impressao_corte, impressao_largura_mm FROM configuracoes WHERE id = 1",
     );
     const row = rows[0] || {};
     return {
@@ -213,15 +234,15 @@ export default function PDV() {
   const buildSalePrintContent = (
     sale: Pick<RecentSale, "id" | "metodo_pagamento" | "cliente_nome" | "data_venda" | "total_venda">,
     itens: Array<{ descricao: string; quantidade: number; valorUnitario: number; valorTotal: number }>,
-    nomeLoja: string,
+    config: PrintConfigWithStore,
   ) => {
     return buildHistoricoPrintText({
-      titulo: nomeLoja,
+      titulo: config.nomeLoja,
       subtitulo: `Venda #${sale.id} - ${getSalePaymentLabel(sale)}`,
       dataVenda: formatSaleDateTime(sale.data_venda),
       total: sale.total_venda,
       itens,
-    });
+    }, config.paperWidth);
   };
 
   const printSaleDirect = async (
@@ -232,7 +253,7 @@ export default function PDV() {
   ) => {
     await invoke("imprimir_padrao_direto", {
       nome: `venda-${sale.id}.txt`,
-      conteudo: buildSalePrintContent(sale, itens, config.nomeLoja),
+      conteudo: buildSalePrintContent(sale, itens, config),
       copias: copies,
       cortar: config.cutPaperEnabled,
     });
@@ -307,6 +328,12 @@ export default function PDV() {
     setShowRecentPrintModal(false);
   };
 
+  const closePostFinalizePrintModal = () => {
+    if (printingPostFinalizeSale) return;
+    setPostFinalizePrintJob(null);
+    setPostFinalizePrintActionSelected(getPostFinalizePrintDefaultAction());
+  };
+
   const openRecentPrintConfirm = async (sale: RecentSale) => {
     setRecentPrintConfirmSale(sale);
     setRecentPrintActionSelected("print");
@@ -351,6 +378,25 @@ export default function PDV() {
       alert("Erro ao imprimir venda.");
     } finally {
       setPrintingRecentSale(false);
+    }
+  };
+
+  const handlePostFinalizePrint = async () => {
+    if (!postFinalizePrintJob || printingPostFinalizeSale) return;
+    setPrintingPostFinalizeSale(true);
+    try {
+      await printSaleDirect(
+        postFinalizePrintJob.sale,
+        postFinalizePrintJob.itens,
+        postFinalizePrintJob.config,
+        postFinalizePrintJob.copies,
+      );
+      closePostFinalizePrintModal();
+    } catch (err) {
+      console.error("Erro ao imprimir venda após finalização:", err);
+      alert("Venda concluída, mas a impressão falhou.");
+    } finally {
+      setPrintingPostFinalizeSale(false);
     }
   };
 
@@ -613,9 +659,10 @@ export default function PDV() {
       showPaymentConfirm ||
       showCashConfirm ||
       showRecentPrintModal ||
+      postFinalizePrintJob !== null ||
       stage === 'checkout';
     return () => { pdvModalOpen = false; };
-  }, [showExitConfirm, showQuantityModal, showClienteModal, showPaymentConfirm, showCashConfirm, showRecentPrintModal, stage]);
+  }, [showExitConfirm, showQuantityModal, showClienteModal, showPaymentConfirm, showCashConfirm, showRecentPrintModal, postFinalizePrintJob, stage]);
 
   useEffect(() => {
     if (!showRecentPrintModal) return;
@@ -666,6 +713,42 @@ export default function PDV() {
     window.addEventListener("keydown", handler, true);
     return () => window.removeEventListener("keydown", handler, true);
   }, [showRecentPrintModal, recentPrintConfirmSale, recentSales, selectedRecentSaleIndex, printingRecentSale, recentPrintActionSelected]);
+
+  useEffect(() => {
+    if (!postFinalizePrintJob) return;
+
+    const handler = (e: KeyboardEvent) => {
+      if (printingPostFinalizeSale) return;
+
+      if (["ArrowLeft", "ArrowRight", "Enter", "Escape"].includes(e.key)) {
+        e.preventDefault();
+        e.stopPropagation();
+      }
+
+      if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
+        setPostFinalizePrintActionSelected((prev) =>
+          getPostFinalizePrintNextAction(prev, e.key as "ArrowLeft" | "ArrowRight"),
+        );
+        return;
+      }
+
+      if (e.key === "Escape") {
+        closePostFinalizePrintModal();
+        return;
+      }
+
+      if (e.key === "Enter") {
+        if (postFinalizePrintActionSelected === "print") {
+          void handlePostFinalizePrint();
+        } else {
+          closePostFinalizePrintModal();
+        }
+      }
+    };
+
+    window.addEventListener("keydown", handler, true);
+    return () => window.removeEventListener("keydown", handler, true);
+  }, [postFinalizePrintJob, postFinalizePrintActionSelected, printingPostFinalizeSale]);
 
   // Register navigate-away interceptor so Layout can ask PDV before leaving
   useEffect(() => {
@@ -929,7 +1012,7 @@ export default function PDV() {
 
     window.addEventListener('keydown', handleKeyDown, true);
     return () => window.removeEventListener('keydown', handleKeyDown, true);
-  }, [stage, cart, cart.length, showExitConfirm, products, focusedProductIndex, search, focusedCartIndex, focusedCartAction, confirmDeleteIdx, focusedZone, editingItemId, showQuantityModal, showClienteModal, showRecentPrintModal]);
+  }, [stage, cart, cart.length, showExitConfirm, products, focusedProductIndex, search, focusedCartIndex, focusedCartAction, confirmDeleteIdx, focusedZone, editingItemId, showQuantityModal, showClienteModal, showRecentPrintModal, postFinalizePrintJob]);
 
   const loadClientes = async () => {
     if (!db) return;
@@ -997,29 +1080,28 @@ export default function PDV() {
       setStage(postFinalizeState.stage);
 
       if (vendaId !== null) {
-        void (async () => {
-          try {
-            const config = await loadPrintConfig();
-            const copies = getAutoPrintCopies(config);
-            if (copies <= 0) return;
-
-            await printSaleDirect(
-              {
+        try {
+          const config = await loadPrintConfig();
+          const copies = getAutoPrintCopies(config);
+          if (copies > 0 && shouldOfferPostFinalizePrint(config)) {
+            setPostFinalizePrintActionSelected(getPostFinalizePrintDefaultAction());
+            setPostFinalizePrintJob({
+              sale: {
                 id: vendaId,
                 metodo_pagamento: metodo,
                 cliente_nome: clienteNomeSnapshot,
                 data_venda: isoDate,
                 total_venda: total,
               },
-              cartSnapshot,
+              itens: cartSnapshot,
               config,
               copies,
-            );
-          } catch (printErr) {
-            console.error("Erro na impressão automática:", printErr);
-            alert("Venda concluída, mas a impressão automática falhou.");
+            });
           }
-        })();
+        } catch (printErr) {
+          console.error("Erro ao preparar impressão automática:", printErr);
+          alert("Venda concluída, mas não foi possível preparar a impressão.");
+        }
       }
     } catch (err: any) {
       const msg = err?.message || String(err);
@@ -1448,6 +1530,60 @@ export default function PDV() {
                   onClick={() => handleManualPrintSale(recentPrintConfirmSale)}
                   className={`h-12 rounded-xl font-bold italic uppercase tracking-widest text-[10px] transition-all disabled:opacity-50 ${
                     recentPrintActionSelected === "print"
+                      ? "bg-luxury-orange text-white ring-2 ring-white/20 shadow-lg shadow-luxury-orange/30 scale-[1.02]"
+                      : "bg-luxury-orange/20 text-luxury-orange/60"
+                  }`}
+                >
+                  IMPRIMIR (ENTER)
+                </button>
+              </div>
+            </div>
+          </div>, document.body
+        )}
+
+        {postFinalizePrintJob && createPortal(
+          <div
+            className="fixed inset-0 z-[240] flex items-center justify-center p-6 bg-black/75 backdrop-blur-sm"
+            onClick={e => {
+              if (e.target === e.currentTarget) {
+                closePostFinalizePrintModal();
+              }
+            }}
+          >
+            <div className="glass-card w-full max-w-[520px] p-8 text-center" onClick={e => e.stopPropagation()}>
+              <div className="w-16 h-16 rounded-full bg-luxury-orange/10 flex items-center justify-center mx-auto mb-6 border border-luxury-orange/20">
+                <Printer size={30} className="text-luxury-orange" />
+              </div>
+
+              <h3 className="text-xl font-bold text-white uppercase mb-2 tracking-tight">Venda Finalizada</h3>
+              <p className="text-white/60 text-xs mb-3 uppercase tracking-[0.1em] leading-relaxed">
+                Deseja imprimir a venda agora?
+              </p>
+              <p className="text-luxury-orange text-lg font-extrabold mb-2">
+                {postFinalizePrintJob.copies} {postFinalizePrintJob.copies === 1 ? "via" : "vias"}
+              </p>
+              <p className="text-white/45 text-[11px] uppercase tracking-[0.12em] mb-8">
+                Venda #{postFinalizePrintJob.sale.id} • {getSalePaymentLabel(postFinalizePrintJob.sale)}
+              </p>
+
+              <div className="grid grid-cols-2 gap-3">
+                <button
+                  type="button"
+                  onClick={closePostFinalizePrintModal}
+                  className={`h-12 rounded-xl font-bold uppercase text-[10px] tracking-widest transition-all ${
+                    postFinalizePrintActionSelected === "close"
+                      ? "bg-red-600 text-white ring-2 ring-white/50 shadow-lg shadow-red-600/20 scale-[1.02]"
+                      : "bg-red-600/10 text-red-400 border border-red-500/10 hover:bg-red-600/20"
+                  }`}
+                >
+                  FECHAR (ESC)
+                </button>
+                <button
+                  type="button"
+                  disabled={printingPostFinalizeSale}
+                  onClick={() => void handlePostFinalizePrint()}
+                  className={`h-12 rounded-xl font-bold italic uppercase tracking-widest text-[10px] transition-all disabled:opacity-50 ${
+                    postFinalizePrintActionSelected === "print"
                       ? "bg-luxury-orange text-white ring-2 ring-white/20 shadow-lg shadow-luxury-orange/30 scale-[1.02]"
                       : "bg-luxury-orange/20 text-luxury-orange/60"
                   }`}

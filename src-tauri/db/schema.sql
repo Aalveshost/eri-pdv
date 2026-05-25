@@ -9,7 +9,8 @@ CREATE TABLE IF NOT EXISTS configuracoes (
     nome_loja TEXT DEFAULT 'Salgados Pro',
     impressao_automatica INTEGER DEFAULT 0,
     impressao_vias INTEGER DEFAULT 1,
-    impressao_corte INTEGER DEFAULT 0
+    impressao_corte INTEGER DEFAULT 0,
+    impressao_largura_mm INTEGER DEFAULT 58
 );
 
 -- Insert default config if not exists
