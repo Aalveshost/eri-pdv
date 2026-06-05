@@ -6,11 +6,13 @@ import Modal from "../components/Modal";
 import { formatCurrency } from "../utils/currency";
 import { buildHistoricoPrintText, getHistoricoActionMeta, getHistoricoActions, getHistoricoDeleteConfirmText, getNextHistoricoAction } from "./historicoActions";
 import { buildHistoricoDeletePlan } from "./historicoDeleteFlow";
+import { buildPaymentDetailLines, getPaymentMethodLabel, mapSalePaymentRows, type SalePaymentRow } from "./pdvPayments";
 
 interface Venda {
   id: number;
   total_venda: number;
   metodo_pagamento: string;
+  status?: string;
   data_venda: string;
   cliente_nome: string | null;
 }
@@ -22,6 +24,14 @@ interface VendaItem {
   quantidade: number;
   preco_unitario: number;
   produto_nome: string;
+}
+
+interface PaymentTotals {
+  dinheiro: number;
+  pix: number;
+  credito: number;
+  debito: number;
+  prazo: number;
 }
 
 interface VendaPrazoRow {
@@ -90,6 +100,7 @@ const METODO_LABEL: Record<string, { label: string; color: string }> = {
   credito:   { label: 'Credito',  color: 'text-purple-400' },
   debito:    { label: 'Debito',   color: 'text-purple-400' },
   prazo:     { label: 'A Prazo',  color: 'text-luxury-orange' },
+  misto:     { label: 'Misto',    color: 'text-luxury-orange' },
 };
 
 // ─── DateInput com navegação externa ────────────────────────────────────────
@@ -204,16 +215,20 @@ export default function Historico() {
   const [dataFinal, setDataFinal] = useState(getTodayStr());
   const [vendas, setVendas] = useState<Venda[]>([]);
   const [vendaItems, setVendaItems] = useState<Record<number, VendaItem[]>>({});
+  const [vendaPayments, setVendaPayments] = useState<Record<number, SalePaymentRow[]>>({});
   const [expandedVendas, setExpandedVendas] = useState<Set<number>>(new Set());
   const [vendasPrazo, setVendasPrazo] = useState<VendaPrazoRow[]>([]);
   const [vendaPrazoItems, setVendaPrazoItems] = useState<Record<number, VendaPrazoItem[]>>({});
   const [expandedPrazo, setExpandedPrazo] = useState<Set<number>>(new Set());
+  const [paymentTotals, setPaymentTotals] = useState<PaymentTotals>({ dinheiro: 0, pix: 0, credito: 0, debito: 0, prazo: 0 });
   const [activeTab, setActiveTab] = useState<'todas' | 'prazo'>('todas');
   const [actionTarget, setActionTarget] = useState<HistoricoActionTarget | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<HistoricoActionTarget | null>(null);
   const [actionBusy, setActionBusy] = useState<"print" | "delete" | null>(null);
   const [selectedAction, setSelectedAction] = useState<"imprimir" | "excluir">("imprimir");
   const [selectedDeleteAction, setSelectedDeleteAction] = useState<"cancelar" | "excluir">("excluir");
+  const [cancelTarget, setCancelTarget] = useState<Venda | null>(null);
+  const [selectedCancelSaleAction, setSelectedCancelSaleAction] = useState<"cancel" | "confirm">("confirm");
   const [printToast, setPrintToast] = useState<string | null>(null);
   const [printToastLeaving, setPrintToastLeaving] = useState(false);
 
@@ -246,6 +261,7 @@ export default function Historico() {
          v.id,
          v.total_venda,
          v.metodo_pagamento,
+         v.status,
          v.data_venda,
          CASE
            WHEN LOWER(v.metodo_pagamento) = 'prazo' THEN (
@@ -267,6 +283,7 @@ export default function Historico() {
     setVendas(vs);
     setExpandedVendas(new Set());
     setVendaItems({});
+    setVendaPayments({});
 
     const vp: VendaPrazoRow[] = await db.select(
       `SELECT vp.id, vp.cliente_id, vp.data_venda, vp.total, c.nome as cliente_nome
@@ -279,6 +296,25 @@ export default function Historico() {
     setVendasPrazo(vp);
     setExpandedPrazo(new Set());
     setVendaPrazoItems({});
+
+    const paymentRows: Array<{ metodo: string; total: number }> = await db.select(
+      `SELECT LOWER(vp.metodo) as metodo, SUM(vp.valor) as total
+       FROM venda_pagamentos vp
+       JOIN vendas v ON v.id = vp.venda_id
+       WHERE DATE(v.data_venda) >= $1 AND DATE(v.data_venda) <= $2
+         AND COALESCE(LOWER(v.status), 'completa') = 'completa'
+       GROUP BY LOWER(vp.metodo)`,
+      [isoInicial, isoFinal],
+    );
+
+    const nextTotals: PaymentTotals = { dinheiro: 0, pix: 0, credito: 0, debito: 0, prazo: 0 };
+    paymentRows.forEach((row) => {
+      const key = row.metodo as keyof PaymentTotals;
+      if (key in nextTotals) {
+        nextTotals[key] = Number(row.total) || 0;
+      }
+    });
+    setPaymentTotals(nextTotals);
   }, [db, dataInicial, dataFinal]);
 
   useEffect(() => { load(); }, [load]);
@@ -343,6 +379,18 @@ export default function Historico() {
     return processed as VendaItem[];
   }, [db, vendaItems]);
 
+  const loadVendaPaymentsForVenda = useCallback(async (id: number) => {
+    if (!db) return [] as SalePaymentRow[];
+    if (vendaPayments[id]) return vendaPayments[id];
+
+    const pagamentos: SalePaymentRow[] = await db.select(
+      "SELECT id, venda_id, metodo, valor, ordem FROM venda_pagamentos WHERE venda_id = $1 ORDER BY ordem ASC, id ASC",
+      [id],
+    );
+    setVendaPayments((prev) => ({ ...prev, [id]: pagamentos }));
+    return pagamentos;
+  }, [db, vendaPayments]);
+
   const loadVendaPrazoItemsForVenda = useCallback(async (id: number) => {
     if (!db) return [] as VendaPrazoItem[];
     if (vendaPrazoItems[id]) return vendaPrazoItems[id];
@@ -361,9 +409,12 @@ export default function Historico() {
       return next;
     });
 
-    if (isNowExpanded && !vendaItems[id]) {
+    if (isNowExpanded && (!vendaItems[id] || !vendaPayments[id])) {
       try {
-        await loadVendaItemsForVenda(id);
+        await Promise.all([
+          loadVendaItemsForVenda(id),
+          loadVendaPaymentsForVenda(id),
+        ]);
       } catch (err) {
         console.error("Erro ao buscar itens da venda:", err);
       }
@@ -429,12 +480,17 @@ export default function Historico() {
       if (target.kind === "todas") {
         const venda = vendas.find(v => v.id === target.id);
         if (!venda) return;
-        const itens = await loadVendaItemsForVenda(target.id);
+        const [itens, pagamentos] = await Promise.all([
+          loadVendaItemsForVenda(target.id),
+          loadVendaPaymentsForVenda(target.id),
+        ]);
+        const paymentEntries = mapSalePaymentRows(pagamentos);
+        const paymentDetails = paymentEntries.length > 1 ? buildPaymentDetailLines(paymentEntries) : undefined;
         await invoke("imprimir_padrao_direto", {
           nome: `venda-${venda.id}.txt`,
           conteudo: buildHistoricoPrintText({
             titulo: `Venda #${venda.id}`,
-            subtitulo: `Pagamento em ${METODO_LABEL[venda.metodo_pagamento.toLowerCase()]?.label || venda.metodo_pagamento}`,
+            subtitulo: `Pagamento em ${getPaymentMethodLabel(venda.metodo_pagamento.toLowerCase())}`,
             dataVenda: isoToBr(venda.data_venda),
             total: venda.total_venda,
             itens: itens.map(item => ({
@@ -443,6 +499,7 @@ export default function Historico() {
               valorUnitario: item.preco_unitario,
               valorTotal: item.quantidade * item.preco_unitario,
             })),
+            paymentDetails,
           }, paperWidth),
           copias: 1,
           cortar: false,
@@ -536,6 +593,29 @@ export default function Historico() {
     return () => window.removeEventListener("keydown", handler, true);
   }, [deleteTarget, actionBusy, selectedDeleteAction]);
 
+  useEffect(() => {
+    if (!cancelTarget || actionBusy) return;
+
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
+        e.preventDefault();
+        e.stopPropagation();
+        setSelectedCancelSaleAction((prev) => (prev === "confirm" ? "cancel" : "confirm"));
+        return;
+      }
+
+      if (e.key === "Enter") {
+        e.preventDefault();
+        e.stopPropagation();
+        if (selectedCancelSaleAction === "confirm") handleCancelVenda();
+        else setCancelTarget(null);
+      }
+    };
+
+    window.addEventListener("keydown", handler, true);
+    return () => window.removeEventListener("keydown", handler, true);
+  }, [cancelTarget, actionBusy, selectedCancelSaleAction]);
+
   const handleDeleteVenda = async () => {
     if (!db || !deleteTarget || actionBusy) return;
     setActionBusy("delete");
@@ -575,6 +655,7 @@ export default function Historico() {
           }
         }
 
+        await db.execute("DELETE FROM venda_pagamentos WHERE venda_id = $1", [deletePlan.deleteVendaId]);
         await db.execute("DELETE FROM venda_itens WHERE venda_id = $1", [deletePlan.deleteVendaId]);
         await db.execute("DELETE FROM vendas WHERE id = $1", [deletePlan.deleteVendaId]);
       }
@@ -594,10 +675,65 @@ export default function Historico() {
     }
   };
 
+  const handleCancelVenda = async () => {
+    if (!db || !cancelTarget || actionBusy) return;
+    setActionBusy("delete");
+    try {
+      if (String(cancelTarget.status || "").toLowerCase() !== "cancelada") {
+        const itens: Array<{ lote_id: number | null; quantidade: number }> = await db.select(
+          "SELECT lote_id, quantidade FROM venda_itens WHERE venda_id = $1",
+          [cancelTarget.id],
+        );
+
+        for (const item of itens) {
+          if (item.lote_id !== null) {
+            await db.execute(
+              `UPDATE lotes
+               SET qtd_atual = qtd_atual + $1,
+                   qtd_vendida = CASE
+                     WHEN COALESCE(qtd_vendida, 0) >= $1 THEN qtd_vendida - $1
+                     ELSE 0
+                   END
+               WHERE id = $2`,
+              [item.quantidade, item.lote_id],
+            );
+          }
+        }
+
+        const prazoPayments: Array<{ valor: number }> = await db.select(
+          "SELECT valor FROM venda_pagamentos WHERE venda_id = $1 AND LOWER(metodo) = 'prazo' ORDER BY ordem ASC, id ASC",
+          [cancelTarget.id],
+        );
+
+        await db.execute("UPDATE vendas SET status = 'cancelada' WHERE id = $1", [cancelTarget.id]);
+
+        for (const payment of prazoPayments) {
+          const prazoRows: Array<{ id: number }> = await db.select(
+            "SELECT id FROM vendas_prazo WHERE data_venda = $1 AND total = $2 ORDER BY id DESC",
+            [cancelTarget.data_venda, payment.valor],
+          );
+
+          for (const prazo of prazoRows) {
+            await db.execute("DELETE FROM vendas_prazo_itens WHERE venda_id = $1", [prazo.id]);
+            await db.execute("DELETE FROM vendas_prazo WHERE id = $1", [prazo.id]);
+          }
+        }
+      }
+
+      setCancelTarget(null);
+      await load();
+    } catch (err) {
+      console.error("Erro ao cancelar venda:", err);
+      alert(`Erro ao cancelar venda: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setActionBusy(null);
+    }
+  };
+
   // ── Handler teclado ──
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if (actionTarget || deleteTarget) {
+      if (actionTarget || deleteTarget || cancelTarget) {
         return;
       }
 
@@ -713,6 +849,13 @@ export default function Historico() {
           const venda = vendas[focusedRow];
           const meta = getHistoricoActionMeta('todas', venda.id);
           openActions({ kind: 'todas', id: venda.id, ...meta });
+        } else if (e.key === 'F3') {
+          e.preventDefault(); e.stopPropagation();
+          const venda = vendas[focusedRow];
+          if (String(venda.status || "").toLowerCase() !== "cancelada") {
+            setSelectedCancelSaleAction("confirm");
+            setCancelTarget(venda);
+          }
         } else if (e.key === 'Enter') {
           e.preventDefault(); e.stopPropagation();
           toggleVenda(vendas[focusedRow].id);
@@ -743,14 +886,15 @@ export default function Historico() {
     };
     window.addEventListener('keydown', handler, true);
     return () => window.removeEventListener('keydown', handler, true);
-  }, [navZone, inputActive, focusedRow, activeTab, vendas, vendasPrazo, load, actionTarget, deleteTarget]);
+  }, [navZone, inputActive, focusedRow, activeTab, vendas, vendasPrazo, load, actionTarget, deleteTarget, cancelTarget]);
 
   // Totais
-  const totalDinheiro = vendas.filter(v => v.metodo_pagamento.toLowerCase() === 'dinheiro').reduce((a,v) => a+v.total_venda, 0);
-  const totalPix      = vendas.filter(v => v.metodo_pagamento.toLowerCase() === 'pix').reduce((a,v) => a+v.total_venda, 0);
-  const totalCartao   = vendas.filter(v => ['cartao', 'credito', 'debito'].includes(v.metodo_pagamento.toLowerCase())).reduce((a,v) => a+v.total_venda, 0);
-  const totalPrazo    = vendasPrazo.reduce((a,v) => a+v.total, 0);
-  const totalGeral    = totalDinheiro + totalPix + totalCartao + totalPrazo;
+  const totalDinheiro = paymentTotals.dinheiro;
+  const totalPix = paymentTotals.pix;
+  const totalCredito = paymentTotals.credito;
+  const totalDebito = paymentTotals.debito;
+  const totalPrazo = paymentTotals.prazo;
+  const totalGeral = totalDinheiro + totalPix + totalCredito + totalDebito + totalPrazo;
 
   const activeList = activeTab === 'todas' ? vendas : vendasPrazo;
 
@@ -762,6 +906,7 @@ export default function Historico() {
         <span><span className="text-luxury-orange">F1</span> = Ações</span>
         <span><span className="text-luxury-orange">ENTER</span> = Expandir</span>
         <span><span className="text-luxury-orange">↑↓</span> = Navegar</span>
+        <span><span className="text-luxury-orange">F3</span> = Cancelar Venda</span>
         <span><span className="text-luxury-orange">ESC</span> = Sair</span>
       </div>
 
@@ -792,7 +937,8 @@ export default function Historico() {
           {[
             { label: 'Dinheiro', value: totalDinheiro, color: 'text-green-400' },
             { label: 'PIX',      value: totalPix,      color: 'text-blue-400' },
-            { label: 'Cartão',   value: totalCartao,   color: 'text-purple-400' },
+            { label: 'Crédito',  value: totalCredito,  color: 'text-purple-400' },
+            { label: 'Débito',   value: totalDebito,   color: 'text-purple-400' },
             { label: 'A Prazo',  value: totalPrazo,    color: 'text-luxury-orange' },
             { label: 'TOTAL',    value: totalGeral,    color: 'text-white' },
           ].map((t) => (
@@ -853,11 +999,12 @@ export default function Historico() {
             {activeTab === 'todas' && vendas.map((v, i) => {
               const metodoLower = v.metodo_pagamento.toLowerCase();
               const meta = METODO_LABEL[metodoLower] || { 
-                label: v.metodo_pagamento.charAt(0).toUpperCase() + v.metodo_pagamento.slice(1).toLowerCase(), 
+                label: getPaymentMethodLabel(metodoLower), 
                 color: 'text-white' 
               };
               const focused = navZone === 'lista-vendas' && focusedRow === i;
               const expanded = expandedVendas.has(v.id);
+              const canceled = String(v.status || "").toLowerCase() === "cancelada";
               const metodoLabel = metodoLower === 'prazo' && v.cliente_nome
                 ? `${meta.label} - ${v.cliente_nome}`
                 : meta.label;
@@ -870,16 +1017,20 @@ export default function Historico() {
                       tabIndex={-1}
                       onFocus={() => { setNavZone('lista-vendas'); setFocusedRow(i); }}
                       className={`flex items-center border-b border-white/5 transition-colors cursor-pointer outline-none px-0 ${
-                        focused ? 'bg-luxury-orange/10 ring-1 ring-inset ring-luxury-orange/30' : 'hover:bg-white/5'
+                        canceled
+                          ? focused
+                            ? 'bg-red-500/18 ring-1 ring-inset ring-red-500/35'
+                            : 'bg-red-500/10 hover:bg-red-500/14'
+                          : focused ? 'bg-luxury-orange/10 ring-1 ring-inset ring-luxury-orange/30' : 'hover:bg-white/5'
                       }`}
                     >
                       <div className="px-4 py-3 w-8 text-white/30 shrink-0">
                         {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
                       </div>
-                      <div className="px-4 py-3 font-mono text-xs text-white/45 w-24 shrink-0">#{v.id}</div>
-                      <div className="px-4 py-3 font-mono text-sm text-white/70 w-48 shrink-0">{isoToBr(v.data_venda)}</div>
-                      <div className={`px-4 py-3 font-bold text-sm flex-1 ${meta.color}`}>{metodoLabel}</div>
-                      <div className="px-4 py-3 text-right font-black text-white w-32 shrink-0">R$ {formatCurrency(v.total_venda)}</div>
+                      <div className={`px-4 py-3 font-mono text-xs w-24 shrink-0 ${canceled ? "text-red-200/80 line-through" : "text-white/45"}`}>#{v.id}</div>
+                      <div className={`px-4 py-3 font-mono text-sm w-48 shrink-0 ${canceled ? "text-red-200/80 line-through" : "text-white/70"}`}>{isoToBr(v.data_venda)}</div>
+                      <div className={`px-4 py-3 font-bold text-sm flex-1 ${canceled ? "text-red-200/90 line-through" : meta.color}`}>{metodoLabel}</div>
+                      <div className={`px-4 py-3 text-right font-black w-32 shrink-0 ${canceled ? "text-red-100/90 line-through" : "text-white"}`}>R$ {formatCurrency(v.total_venda)}</div>
                     </div>
                     {expanded && (
                       <div className="bg-black/40 border-b border-white/5 overflow-hidden">
@@ -888,23 +1039,38 @@ export default function Historico() {
                         ) : vendaItems[v.id].length === 0 ? (
                           <div className="px-12 py-3 text-xs text-red-400/50 uppercase font-bold tracking-widest">Nenhum detalhe encontrado para esta venda.</div>
                         ) : (
-                          vendaItems[v.id].map(item => (
-                            <div key={item.id} className="flex items-center gap-3 px-12 py-2 border-t border-white/5 text-sm hover:bg-white/5 transition-colors">
-                              <span className="flex-1 text-white/70 font-medium">
-                                <span className="text-luxury-orange font-bold mr-2">{item.quantidade}x</span>
-                                {item.produto_nome}
-                              </span>
-                              <div className="flex items-center gap-2 text-right font-mono">
-                                <span className="text-white/50 text-[11px] font-medium">
-                                  R$ {formatCurrency(item.preco_unitario)}
-                                </span>
-                                <span className="text-white/10 text-xs">|</span>
-                                <span className="text-white font-black">
-                                  R$ {formatCurrency(item.quantidade * item.preco_unitario)}
-                                </span>
+                          <>
+                            {vendaPayments[v.id] && vendaPayments[v.id].length > 1 && (
+                              <div className="px-12 py-3 border-t border-white/5 bg-white/[0.02]">
+                                <p className="text-[10px] uppercase tracking-[0.14em] font-bold text-white/30 mb-2">Pagamentos</p>
+                                <div className="space-y-1">
+                                  {buildPaymentDetailLines(mapSalePaymentRows(vendaPayments[v.id])).map((line) => (
+                                    <div key={line} className="flex items-center justify-between text-sm font-bold text-white/80">
+                                      <span>{line.split(":")[0]}</span>
+                                      <span className="text-luxury-orange">{line.split(": ")[1]}</span>
+                                    </div>
+                                  ))}
+                                </div>
                               </div>
-                            </div>
-                          ))
+                            )}
+                            {vendaItems[v.id].map(item => (
+                              <div key={item.id} className="flex items-center gap-3 px-12 py-2 border-t border-white/5 text-sm hover:bg-white/5 transition-colors">
+                                <span className="flex-1 text-white/70 font-medium">
+                                  <span className="text-luxury-orange font-bold mr-2">{item.quantidade}x</span>
+                                  {item.produto_nome}
+                                </span>
+                                <div className="flex items-center gap-2 text-right font-mono">
+                                  <span className="text-white/50 text-[11px] font-medium">
+                                    R$ {formatCurrency(item.preco_unitario)}
+                                  </span>
+                                  <span className="text-white/10 text-xs">|</span>
+                                  <span className="text-white font-black">
+                                    R$ {formatCurrency(item.quantidade * item.preco_unitario)}
+                                  </span>
+                                </div>
+                              </div>
+                            ))}
+                          </>
                         )}
                       </div>
                     )}
@@ -1057,6 +1223,46 @@ export default function Historico() {
               }`}
             >
               {actionBusy === "delete" ? "Excluindo..." : "Excluir"}
+            </button>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal
+        isOpen={cancelTarget !== null}
+        onClose={() => { if (!actionBusy) setCancelTarget(null); }}
+        title="Cancelar Venda"
+      >
+        <div className="space-y-6">
+          <p className="text-sm text-white/70 leading-relaxed">
+            {cancelTarget ? `Deseja cancelar a venda #${cancelTarget.id} - R$ ${formatCurrency(cancelTarget.total_venda)}?` : ""}
+          </p>
+          <div className="flex gap-3">
+            <button
+              type="button"
+              disabled={actionBusy !== null}
+              onClick={() => setCancelTarget(null)}
+              onFocus={() => setSelectedCancelSaleAction("cancel")}
+              className={`flex-1 h-12 rounded-xl border font-bold uppercase text-xs transition-all outline-none disabled:opacity-50 ${
+                selectedCancelSaleAction === "cancel"
+                  ? "border-white/25 bg-white/10 text-white ring-2 ring-white/15"
+                  : "border-white/10 text-white/60 hover:bg-white/5"
+              }`}
+            >
+              Nao
+            </button>
+            <button
+              type="button"
+              disabled={actionBusy !== null}
+              onClick={handleCancelVenda}
+              onFocus={() => setSelectedCancelSaleAction("confirm")}
+              className={`flex-1 h-12 rounded-xl text-white font-bold uppercase text-xs transition-all outline-none disabled:opacity-50 ${
+                selectedCancelSaleAction === "confirm"
+                  ? "bg-red-600 ring-2 ring-red-400/40"
+                  : "bg-red-600/85 hover:bg-red-500"
+              }`}
+            >
+              {actionBusy === "delete" ? "Cancelando..." : "Sim"}
             </button>
           </div>
         </div>

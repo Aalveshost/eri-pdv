@@ -1,15 +1,16 @@
 import { useState, useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
-import { CreditCard, Banknote, QrCode, X, Pencil, Trash2, Smartphone, Clock, Check, Printer } from "lucide-react";
+import { CreditCard, Banknote, QrCode, X, Pencil, Trash2, Smartphone, Clock, Check, Printer, ChevronDown, ChevronUp } from "lucide-react";
 import { useDatabase } from "../hooks/useDatabase";
 import { useScanner } from "../hooks/useScanner";
 import { invoke } from "@tauri-apps/api/core";
 import { processarVendaFIFO } from "../utils/fifoEngine";
+import { canUnlockWithAccessPassword, normalizeStoredAccessPassword, sanitizeAccessPassword } from "../utils/accessPassword";
 import { normalizeText } from "../utils/text";
 import { formatCurrency, parseCurrencyToNumber, handleCurrencyInput, handleWeightInput, finalizeWeightInput } from "../utils/currency";
 import { buildHistoricoPrintText } from "./historicoActions";
 import { getCashPaymentSummary } from "./pdvCashFlow";
-import { formatDateBR, getCashCheckoutCancelState, getCashCheckoutOpenState, getCheckoutDefaultSelection, getPostFinalizeVendaState, getTodayDigits, getVendaSuccessToastTiming } from "./pdvFlow";
+import { formatDateBR, getCheckoutDefaultSelection, getPostFinalizeVendaState, getTodayDigits, getVendaSuccessToastTiming } from "./pdvFlow";
 import {
   getAutoPrintCopies,
   getManualPrintCopies,
@@ -21,6 +22,17 @@ import {
   type PostFinalizePrintAction,
   type PrintConfig,
 } from "./pdvPrintFlow";
+import {
+  buildPaymentDetailLines,
+  getCheckoutPaymentsSummary,
+  getPaymentMethodLabel,
+  getResumoMetodoPagamento,
+  mapSalePaymentRows,
+  normalizePaymentEntries,
+  type PaymentEntry,
+  type PaymentMethod,
+  type SalePaymentRow,
+} from "./pdvPayments";
 
 // Module-level flag: set by Layout when user presses Enter on PDV sidebar link
 // Checked on mount to decide whether to auto-focus the date input
@@ -49,6 +61,7 @@ interface RecentSale {
   id: number;
   total_venda: number;
   metodo_pagamento: string;
+  status?: string;
   data_venda: string;
   cliente_nome: string | null;
 }
@@ -69,6 +82,7 @@ interface PostFinalizePrintJob {
   itens: Array<{ descricao: string; quantidade: number; valorUnitario: number; valorTotal: number }>;
   config: PrintConfigWithStore;
   copies: number;
+  payments?: PaymentEntry[];
 }
 
 const PAYMENT_LABELS: Record<string, string> = {
@@ -87,6 +101,7 @@ const PAYMENT_COLORS: Record<string, string> = {
   credito: "text-purple-400",
   debito: "text-purple-400",
   prazo: "text-luxury-orange",
+  misto: "text-luxury-orange",
 };
 
 function formatSaleDateTime(value: string) {
@@ -104,7 +119,7 @@ function formatSaleDateTime(value: string) {
 
 function getSalePaymentLabel(sale: Pick<RecentSale, "metodo_pagamento" | "cliente_nome">) {
   const method = sale.metodo_pagamento.toLowerCase();
-  const base = PAYMENT_LABELS[method] || `${sale.metodo_pagamento}`;
+  const base = method === "misto" ? "Misto" : PAYMENT_LABELS[method] || `${sale.metodo_pagamento}`;
   if (method === "prazo" && sale.cliente_nome) {
     return `${base} - ${sale.cliente_nome}`;
   }
@@ -116,6 +131,7 @@ function getSalePaymentColor(method: string) {
 }
 
 export default function PDV() {
+  const MASTER_PASSWORD = "1973";
   const { db } = useDatabase();
   const getTodayDigitsNow = () => getTodayDigits(new Date());
 
@@ -137,18 +153,23 @@ export default function PDV() {
   const [focusedProductIndex, setFocusedProductIndex] = useState<number | null>(null);
   const [showExitConfirm, setShowExitConfirm] = useState(false);
   const [exitConfirmSelected, setExitConfirmSelected] = useState<'exit' | 'continue'>('exit');
-  // checkout keyboard nav: 'prazo'(row0) | 'dinheiro'(row1,col0) | 'pix'(row1,col1) | 'credito'(row2,col0) | 'debito'(row2,col1)
+  // checkout keyboard nav: payment cards + delete actions + footer buttons
   type CheckoutOption = 'prazo' | 'dinheiro' | 'pix' | 'credito' | 'debito';
-  const [checkoutSelected, setCheckoutSelected] = useState<CheckoutOption>('dinheiro');
+  type CheckoutSelection = CheckoutOption | `delete:${PaymentMethod}` | 'back' | 'confirm';
+  const [checkoutSelected, setCheckoutSelected] = useState<CheckoutSelection>('dinheiro');
   const [dateError, setDateError] = useState("");
+  const [nextSaleId, setNextSaleId] = useState<number | null>(null);
   const [showClienteModal, setShowClienteModal] = useState(false);
   const [clientes, setClientes] = useState<{id:number;nome:string;telefone:string|null}[]>([]);
   const [clienteSearch, setClienteSearch] = useState('');
   const [clienteSelecionado, setClienteSelecionado] = useState<{id:number;nome:string}|null>(null);
   const [showPaymentConfirm, setShowPaymentConfirm] = useState(false);
   const [pendingPayment, setPendingPayment] = useState<{method: string, label: string} | null>(null);
-  const [showCashConfirm, setShowCashConfirm] = useState(false);
-  const [cashPaidInput, setCashPaidInput] = useState("0,00");
+  const [checkoutPayments, setCheckoutPayments] = useState<PaymentEntry[]>([]);
+  const [showPaymentAmountModal, setShowPaymentAmountModal] = useState(false);
+  const [paymentAmountMethod, setPaymentAmountMethod] = useState<PaymentMethod | null>(null);
+  const [paymentAmountInput, setPaymentAmountInput] = useState("0,00");
+  const [paymentAmountActionSelected, setPaymentAmountActionSelected] = useState<"confirm" | "cancel">("confirm");
   const [clienteFocusedIdx, setClienteFocusedIdx] = useState<number>(-1);
   const clienteListRef = useRef<HTMLDivElement>(null);
   const clienteItemRefs = useRef<(HTMLButtonElement | null)[]>([]);
@@ -159,13 +180,22 @@ export default function PDV() {
   const [recentSalesLoading, setRecentSalesLoading] = useState(false);
   const [selectedRecentSaleIndex, setSelectedRecentSaleIndex] = useState(0);
   const [recentPrintConfirmSale, setRecentPrintConfirmSale] = useState<RecentSale | null>(null);
+  const [recentPrintSummaryExpanded, setRecentPrintSummaryExpanded] = useState(false);
   const [recentPrintPreviewItems, setRecentPrintPreviewItems] = useState<RecentSaleItem[]>([]);
   const [recentPrintPreviewLoading, setRecentPrintPreviewLoading] = useState(false);
   const [recentPrintActionSelected, setRecentPrintActionSelected] = useState<"print" | "cancel">("print");
+  const [recentCancelPasswordSale, setRecentCancelPasswordSale] = useState<RecentSale | null>(null);
+  const [recentCancelPasswordInput, setRecentCancelPasswordInput] = useState("");
+  const [recentCancelPasswordError, setRecentCancelPasswordError] = useState(false);
+  const [recentCancelConfirmSale, setRecentCancelConfirmSale] = useState<RecentSale | null>(null);
+  const [recentCancelActionSelected, setRecentCancelActionSelected] = useState<"confirm" | "cancel">("confirm");
   const [printingRecentSale, setPrintingRecentSale] = useState(false);
+  const recentPrintContentScrollRef = useRef<HTMLDivElement>(null);
+  const recentCancelPasswordInputRef = useRef<HTMLInputElement>(null);
   const [postFinalizePrintJob, setPostFinalizePrintJob] = useState<PostFinalizePrintJob | null>(null);
   const [postFinalizePrintActionSelected, setPostFinalizePrintActionSelected] = useState<PostFinalizePrintAction>(getPostFinalizePrintDefaultAction());
   const [printingPostFinalizeSale, setPrintingPostFinalizeSale] = useState(false);
+  const [recentPrintPreviewPayments, setRecentPrintPreviewPayments] = useState<SalePaymentRow[]>([]);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const dateInputRef = useRef<HTMLInputElement>(null);
   const modalQuantityRef = useRef<HTMLInputElement>(null);
@@ -181,34 +211,141 @@ export default function PDV() {
   const focusedProductIndexRef = useRef<number | null>(null);
 
   const total = cart.reduce((acc, item) => acc + (item.preco * item.quantidade), 0);
+  const checkoutSummary = getCheckoutPaymentsSummary(total, checkoutPayments);
+  const checkoutPaymentLines = buildPaymentDetailLines(checkoutPayments);
+  const amountModalTargetTotal = paymentAmountMethod === "dinheiro" ? checkoutSummary.restante || total : checkoutSummary.restante;
+  const amountModalSummary = getCashPaymentSummary(
+    amountModalTargetTotal,
+    parseCurrencyToNumber(paymentAmountInput),
+  );
+  const currentMethodPayment = paymentAmountMethod
+    ? checkoutPayments.find((entry) => entry.method === paymentAmountMethod) ?? null
+    : null;
 
-  const [confirmActionSelected, setConfirmActionSelected] = useState<'confirm' | 'cancel'>('confirm');
-  const cashPaidRef = useRef<HTMLInputElement>(null);
+  const formatCurrencyInputValue = (value: number) => value.toFixed(2).replace(".", ",");
 
-  const openCashConfirm = () => {
-    const nextState = getCashCheckoutOpenState();
-    setCashPaidInput(nextState.cashPaidInput);
-    setShowCashConfirm(nextState.showCashConfirm);
+  const closePaymentAmountModal = () => {
+    setShowPaymentAmountModal(false);
+    setPaymentAmountMethod(null);
+    setPaymentAmountInput("0,00");
+    setPaymentAmountActionSelected("confirm");
   };
 
-  const closeCashConfirm = () => {
-    const nextState = getCashCheckoutCancelState();
-    setCashPaidInput(nextState.cashPaidInput);
-    setShowCashConfirm(nextState.showCashConfirm);
-    setStage(nextState.stage);
+  const openPaymentAmountModal = (method: PaymentMethod) => {
+    const existing = checkoutPayments.find((entry) => entry.method === method);
+    const suggestedAmount = existing?.amount ?? (checkoutSummary.restante > 0 ? checkoutSummary.restante : total);
+    setPaymentAmountMethod(method);
+    setPaymentAmountInput(formatCurrencyInputValue(suggestedAmount));
+    setPaymentAmountActionSelected("confirm");
+    setShowPaymentAmountModal(true);
   };
 
-  const requestFinalize = (method: string, label: string) => {
-    if (method === "dinheiro") {
-      openCashConfirm();
+  const confirmClienteSelection = () => {
+    if (!clienteSelecionado) return;
+    setShowClienteModal(false);
+    if (stage === "checkout") {
+      openPaymentAmountModal("prazo");
       return;
     }
-    setPendingPayment({ method, label });
-    setConfirmActionSelected('confirm');
     setShowPaymentConfirm(true);
   };
 
-  const cashSummary = getCashPaymentSummary(total, parseCurrencyToNumber(cashPaidInput));
+  const isCheckoutPaymentCard = (selection: CheckoutSelection): selection is CheckoutOption =>
+    ["dinheiro", "pix", "credito", "debito", "prazo"].includes(selection);
+
+  const isCheckoutDeleteSelection = (
+    selection: CheckoutSelection,
+  ): selection is `delete:${PaymentMethod}` => selection.startsWith("delete:");
+
+  const getCheckoutDeleteSelection = (method: PaymentMethod): CheckoutSelection => `delete:${method}`;
+
+  const clearCheckoutPayments = () => {
+    setCheckoutPayments([]);
+    setClienteSelecionado(null);
+    setCheckoutSelected("prazo");
+  };
+
+  const removeCheckoutPayment = (method: PaymentMethod, nextSelection?: CheckoutSelection) => {
+    const remaining = checkoutPayments.filter((entry) => entry.method !== method);
+    const remainingNormalized = normalizePaymentEntries(remaining);
+
+    setCheckoutPayments(remainingNormalized);
+    if (method === "prazo") setClienteSelecionado(null);
+
+    if (nextSelection) {
+      setCheckoutSelected(nextSelection);
+      return;
+    }
+
+    if (remainingNormalized.length > 0) {
+      const currentIndex = checkoutPayments.findIndex((entry) => entry.method === method);
+      const fallbackIndex = Math.min(
+        currentIndex >= 0 ? currentIndex : 0,
+        remainingNormalized.length - 1,
+      );
+      setCheckoutSelected(getCheckoutDeleteSelection(remainingNormalized[fallbackIndex].method));
+      return;
+    }
+
+    setCheckoutSelected("prazo");
+  };
+
+  const quickFillCheckoutPayment = (method: Exclude<CheckoutOption, "prazo">) => {
+    const existing = checkoutPayments.find((entry) => entry.method === method);
+    const amountToLaunch = Math.round(((existing?.amount || 0) + checkoutSummary.restante) * 100) / 100;
+
+    if (!Number.isFinite(amountToLaunch) || amountToLaunch <= 0) return;
+
+    setCheckoutPayments((prev) => {
+      const withoutMethod = prev.filter((entry) => entry.method !== method);
+      return normalizePaymentEntries([
+        ...withoutMethod,
+        {
+          method,
+          amount: amountToLaunch,
+        },
+      ]);
+    });
+  };
+
+  const confirmPaymentAmount = () => {
+    if (!paymentAmountMethod) return;
+    const parsedAmount = parseCurrencyToNumber(paymentAmountInput);
+    const amount = Math.round(parsedAmount * 100) / 100;
+    if (!Number.isFinite(amount) || amount <= 0) return;
+    if (paymentAmountMethod !== "dinheiro" && amount > checkoutSummary.restante + (currentMethodPayment?.amount || 0)) {
+      return;
+    }
+
+    setCheckoutPayments((prev) => {
+      const withoutMethod = prev.filter((entry) => entry.method !== paymentAmountMethod);
+      return normalizePaymentEntries([
+        ...withoutMethod,
+        {
+          method: paymentAmountMethod,
+          amount,
+        },
+      ]);
+    });
+    closePaymentAmountModal();
+  };
+
+  const requestFinalizeCheckout = () => {
+    if (!checkoutSummary.isComplete) return;
+    const normalized = normalizePaymentEntries(checkoutPayments);
+    const hasPrazo = normalized.some((entry) => entry.method === "prazo");
+    if (hasPrazo && !clienteSelecionado) return;
+    const resumo = getResumoMetodoPagamento(normalized);
+    setPendingPayment({
+      method: resumo,
+      label: getPaymentMethodLabel(resumo),
+    });
+    setConfirmActionSelected("confirm");
+    setShowPaymentConfirm(true);
+  };
+
+  const [confirmActionSelected, setConfirmActionSelected] = useState<'confirm' | 'cancel'>('confirm');
+  const paymentAmountRef = useRef<HTMLInputElement>(null);
 
   const loadPrintConfig = async (): Promise<PrintConfigWithStore> => {
     if (!db) {
@@ -235,13 +372,19 @@ export default function PDV() {
     sale: Pick<RecentSale, "id" | "metodo_pagamento" | "cliente_nome" | "data_venda" | "total_venda">,
     itens: Array<{ descricao: string; quantidade: number; valorUnitario: number; valorTotal: number }>,
     config: PrintConfigWithStore,
+    pagamentos: SalePaymentRow[] | PaymentEntry[] = [],
   ) => {
+    const paymentEntries = pagamentos.length > 0 && "valor" in pagamentos[0]
+      ? mapSalePaymentRows(pagamentos as SalePaymentRow[])
+      : normalizePaymentEntries(pagamentos as PaymentEntry[]);
+    const paymentDetails = paymentEntries.length > 1 ? buildPaymentDetailLines(paymentEntries) : undefined;
     return buildHistoricoPrintText({
       titulo: config.nomeLoja,
       subtitulo: `Venda #${sale.id} - ${getSalePaymentLabel(sale)}`,
       dataVenda: formatSaleDateTime(sale.data_venda),
       total: sale.total_venda,
       itens,
+      paymentDetails,
     }, config.paperWidth);
   };
 
@@ -250,10 +393,11 @@ export default function PDV() {
     itens: Array<{ descricao: string; quantidade: number; valorUnitario: number; valorTotal: number }>,
     config: PrintConfigWithStore,
     copies: number,
+    pagamentos: SalePaymentRow[] | PaymentEntry[] = [],
   ) => {
     await invoke("imprimir_padrao_direto", {
       nome: `venda-${sale.id}.txt`,
-      conteudo: buildSalePrintContent(sale, itens, config),
+      conteudo: buildSalePrintContent(sale, itens, config, pagamentos),
       copias: copies,
       cortar: config.cutPaperEnabled,
     });
@@ -266,6 +410,7 @@ export default function PDV() {
          v.id,
          v.total_venda,
          v.metodo_pagamento,
+         v.status,
          v.data_venda,
          CASE
            WHEN LOWER(v.metodo_pagamento) = 'prazo' THEN (
@@ -286,6 +431,23 @@ export default function PDV() {
     return rows;
   };
 
+  const loadNextSaleId = async () => {
+    if (!db) {
+      setNextSaleId(null);
+      return;
+    }
+
+    try {
+      const rows: Array<{ next_id: number | null }> = await db.select(
+        "SELECT COALESCE(MAX(id), 0) + 1 AS next_id FROM vendas",
+      );
+      setNextSaleId(Number(rows[0]?.next_id || 1));
+    } catch (err) {
+      console.error("Erro ao carregar proximo pedido:", err);
+      setNextSaleId(null);
+    }
+  };
+
   const loadRecentSaleItems = async (saleId: number) => {
     if (!db) return [] as RecentSaleItem[];
     const rows: any[] = await db.select(
@@ -304,6 +466,15 @@ export default function PDV() {
     }));
   };
 
+  const loadSalePayments = async (saleId: number) => {
+    if (!db) return [] as SalePaymentRow[];
+    const rows: any[] = await db.select(
+      "SELECT id, venda_id, metodo, valor, ordem FROM venda_pagamentos WHERE venda_id = $1 ORDER BY ordem ASC, id ASC",
+      [saleId],
+    );
+    return rows as SalePaymentRow[];
+  };
+
   const openRecentPrintModal = async () => {
     if (!db) return;
     setRecentSalesLoading(true);
@@ -312,6 +483,7 @@ export default function PDV() {
       setRecentSales(rows);
       setSelectedRecentSaleIndex(0);
       setRecentPrintConfirmSale(null);
+      setRecentPrintSummaryExpanded(false);
       setShowRecentPrintModal(true);
     } catch (err) {
       console.error("Erro ao carregar últimas vendas:", err);
@@ -324,8 +496,105 @@ export default function PDV() {
   const closeRecentPrintModal = () => {
     if (printingRecentSale) return;
     setRecentPrintConfirmSale(null);
+    setRecentCancelPasswordSale(null);
+    setRecentCancelPasswordInput("");
+    setRecentCancelPasswordError(false);
+    setRecentCancelConfirmSale(null);
+    setRecentPrintSummaryExpanded(false);
     setRecentPrintPreviewItems([]);
+    setRecentPrintPreviewPayments([]);
     setShowRecentPrintModal(false);
+  };
+
+  const performLogicalSaleCancellation = async (saleId: number) => {
+    if (!db) return;
+
+    const vendaRows: Array<{ id: number; status: string; data_venda: string; total_venda: number }> = await db.select(
+      "SELECT id, status, data_venda, total_venda FROM vendas WHERE id = $1 LIMIT 1",
+      [saleId],
+    );
+    const sale = vendaRows[0];
+    if (!sale || String(sale.status || "").toLowerCase() === "cancelada") return;
+
+    const itens: Array<{ lote_id: number | null; quantidade: number }> = await db.select(
+      "SELECT lote_id, quantidade FROM venda_itens WHERE venda_id = $1",
+      [saleId],
+    );
+
+    for (const item of itens) {
+      if (item.lote_id !== null) {
+        await db.execute(
+          `UPDATE lotes
+           SET qtd_atual = qtd_atual + $1,
+               qtd_vendida = CASE
+                 WHEN COALESCE(qtd_vendida, 0) >= $1 THEN qtd_vendida - $1
+                 ELSE 0
+               END
+           WHERE id = $2`,
+          [item.quantidade, item.lote_id],
+        );
+      }
+    }
+
+    const prazoPayments: Array<{ valor: number }> = await db.select(
+      "SELECT valor FROM venda_pagamentos WHERE venda_id = $1 AND LOWER(metodo) = 'prazo' ORDER BY ordem ASC, id ASC",
+      [saleId],
+    );
+
+    await db.execute("UPDATE vendas SET status = 'cancelada' WHERE id = $1", [saleId]);
+
+    for (const payment of prazoPayments) {
+      const prazoRows: Array<{ id: number }> = await db.select(
+        `SELECT id FROM vendas_prazo
+         WHERE data_venda = $1 AND total = $2
+         ORDER BY id DESC`,
+        [sale.data_venda, payment.valor],
+      );
+
+      for (const prazo of prazoRows) {
+        await db.execute("DELETE FROM vendas_prazo_itens WHERE venda_id = $1", [prazo.id]);
+        await db.execute("DELETE FROM vendas_prazo WHERE id = $1", [prazo.id]);
+      }
+    }
+  };
+
+  const openRecentCancelPasswordModal = (sale: RecentSale) => {
+    if (String(sale.status || "").toLowerCase() === "cancelada") return;
+    setRecentCancelPasswordSale(sale);
+    setRecentCancelPasswordInput("");
+    setRecentCancelPasswordError(false);
+    setTimeout(() => recentCancelPasswordInputRef.current?.focus(), 0);
+  };
+
+  const submitRecentCancelPassword = async () => {
+    if (!db || !recentCancelPasswordSale) return;
+    const rows: Array<{ senha: string | null }> = await db.select("SELECT senha FROM configuracoes WHERE id = 1");
+    const expectedPassword = normalizeStoredAccessPassword(rows[0]?.senha);
+    const input = sanitizeAccessPassword(recentCancelPasswordInput);
+
+    if (!canUnlockWithAccessPassword(input, expectedPassword, MASTER_PASSWORD)) {
+      setRecentCancelPasswordError(true);
+      setTimeout(() => {
+        recentCancelPasswordInputRef.current?.focus();
+        const val = recentCancelPasswordInputRef.current?.value || "";
+        recentCancelPasswordInputRef.current?.setSelectionRange(val.length, val.length);
+      }, 0);
+      return;
+    }
+
+    const sale = recentCancelPasswordSale;
+    setRecentCancelPasswordSale(null);
+    setRecentCancelPasswordInput("");
+    setRecentCancelPasswordError(false);
+    setRecentCancelConfirmSale(sale);
+    setRecentCancelActionSelected("confirm");
+  };
+
+  const confirmRecentSaleCancel = async () => {
+    if (!recentCancelConfirmSale) return;
+    await performLogicalSaleCancellation(recentCancelConfirmSale.id);
+    setRecentCancelConfirmSale(null);
+    await openRecentPrintModal();
   };
 
   const closePostFinalizePrintModal = () => {
@@ -336,14 +605,20 @@ export default function PDV() {
 
   const openRecentPrintConfirm = async (sale: RecentSale) => {
     setRecentPrintConfirmSale(sale);
+    setRecentPrintSummaryExpanded(false);
     setRecentPrintActionSelected("print");
     setRecentPrintPreviewLoading(true);
     try {
-      const itens = await loadRecentSaleItems(sale.id);
+      const [itens, pagamentos] = await Promise.all([
+        loadRecentSaleItems(sale.id),
+        loadSalePayments(sale.id),
+      ]);
       setRecentPrintPreviewItems(itens);
+      setRecentPrintPreviewPayments(pagamentos);
     } catch (err) {
       console.error("Erro ao carregar itens da venda:", err);
       setRecentPrintPreviewItems([]);
+      setRecentPrintPreviewPayments([]);
     } finally {
       setRecentPrintPreviewLoading(false);
     }
@@ -353,9 +628,10 @@ export default function PDV() {
     if (!db || printingRecentSale) return;
     setPrintingRecentSale(true);
     try {
-      const [config, itens] = await Promise.all([
+      const [config, itens, pagamentos] = await Promise.all([
         loadPrintConfig(),
         loadRecentSaleItems(sale.id),
+        loadSalePayments(sale.id),
       ]);
 
       await printSaleDirect(
@@ -368,10 +644,12 @@ export default function PDV() {
         })),
         config,
         getManualPrintCopies(),
+        pagamentos,
       );
 
       setRecentPrintConfirmSale(null);
       setRecentPrintPreviewItems([]);
+      setRecentPrintPreviewPayments([]);
       setShowRecentPrintModal(false);
     } catch (err) {
       console.error("Erro ao imprimir venda manualmente:", err);
@@ -390,6 +668,7 @@ export default function PDV() {
         postFinalizePrintJob.itens,
         postFinalizePrintJob.config,
         postFinalizePrintJob.copies,
+        postFinalizePrintJob.payments || [],
       );
       closePostFinalizePrintModal();
     } catch (err) {
@@ -517,6 +796,18 @@ export default function PDV() {
     }
   }, [stage]);
 
+  useEffect(() => {
+    if (!db) return;
+    if (stage !== "checkout" && stage !== "selling" && stage !== "date") return;
+    void loadNextSaleId();
+  }, [db, stage]);
+
+  useEffect(() => {
+    if (stage !== "checkout" && checkoutPayments.length > 0) {
+      setCheckoutPayments([]);
+    }
+  }, [stage, checkoutPayments.length]);
+
   // Re-focus search input when exit confirm modal closes (ESC = continuar)
   useEffect(() => {
     if (!showExitConfirm && stage === 'selling') {
@@ -525,13 +816,13 @@ export default function PDV() {
   }, [showExitConfirm, stage]);
 
   useEffect(() => {
-    if (showCashConfirm) {
+    if (showPaymentAmountModal) {
       setTimeout(() => {
-        cashPaidRef.current?.focus();
-        cashPaidRef.current?.select();
+        paymentAmountRef.current?.focus();
+        paymentAmountRef.current?.select();
       }, 50);
     }
-  }, [showCashConfirm]);
+  }, [showPaymentAmountModal]);
 
   useEffect(() => {
     if (!vendaSuccess) {
@@ -560,7 +851,12 @@ export default function PDV() {
   useEffect(() => {
     if (!showRecentPrintModal) {
       setRecentPrintConfirmSale(null);
+      setRecentCancelPasswordSale(null);
+      setRecentCancelPasswordInput("");
+      setRecentCancelPasswordError(false);
+      setRecentCancelConfirmSale(null);
       setRecentPrintPreviewItems([]);
+      setRecentPrintPreviewPayments([]);
       setRecentPrintPreviewLoading(false);
     }
   }, [showRecentPrintModal]);
@@ -598,7 +894,7 @@ export default function PDV() {
         });
       } else if (e.key === 'Enter') {
         e.preventDefault(); e.stopPropagation();
-        if (clienteSelecionado) setShowPaymentConfirm(true);
+        if (clienteSelecionado) confirmClienteSelection();
       } else if (e.key === 'Escape') {
         e.preventDefault(); e.stopPropagation();
         setShowClienteModal(false);
@@ -606,13 +902,13 @@ export default function PDV() {
     };
     window.addEventListener('keydown', handler, true);
     return () => window.removeEventListener('keydown', handler, true);
-  }, [showClienteModal, clienteSearch, clienteSelecionado, clientes, showPaymentConfirm]);
+  }, [showClienteModal, clienteSearch, clienteSelecionado, clientes, showPaymentConfirm, stage]);
 
   // Checkout keyboard navigation + sidebar lock
   useEffect(() => {
     if (stage !== 'checkout') return;
 
-    // nav map: key -> {up,down,left,right}
+    // nav map for payment cards; delete actions and footer buttons are handled below
     const nav: Record<string, Partial<Record<string, string>>> = {
       dinheiro: { right: 'pix',      down: 'credito' },
       pix:      { left:  'dinheiro',  down: 'debito'  },
@@ -622,33 +918,107 @@ export default function PDV() {
     };
 
     const confirmSelected = (sel: CheckoutOption) => {
-      const labels: Record<string, string> = { dinheiro: 'Dinheiro', pix: 'PIX', credito: 'Crédito', debito: 'Débito', prazo: 'A Prazo' };
       if (sel === 'prazo') handleAPrazo();
-      else requestFinalize(sel, labels[sel] || sel);
+      else openPaymentAmountModal(sel);
     };
 
     const handler = (e: KeyboardEvent) => {
-      if (showClienteModal || showPaymentConfirm || showCashConfirm) return;
-      if (['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Enter','Escape','Tab'].includes(e.key)) {
+      if (showClienteModal || showPaymentConfirm || showPaymentAmountModal) return;
+      if (['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Enter','Escape','Tab',' ','Backspace','Delete','F1'].includes(e.key)) {
         e.preventDefault(); e.stopPropagation();
       }
+      if (e.key === 'F1') {
+        requestFinalizeCheckout();
+        return;
+      }
       if (e.key === 'Escape') { setStage('selling'); return; }
+      if (e.key === ' ' && isCheckoutPaymentCard(checkoutSelected) && checkoutSelected !== 'prazo') {
+        quickFillCheckoutPayment(checkoutSelected);
+        return;
+      }
+      if ((e.key === 'Backspace' || e.key === 'Delete') && isCheckoutPaymentCard(checkoutSelected)) {
+        const methodToRemove = checkoutSelected === 'prazo' ? 'prazo' : checkoutSelected;
+        if (checkoutPayments.some((entry) => entry.method === methodToRemove)) {
+          removeCheckoutPayment(methodToRemove, checkoutSelected);
+        }
+        return;
+      }
       if (e.key === 'Enter') {
-        setCheckoutSelected(prev => { confirmSelected(prev); return prev; });
+        if (isCheckoutPaymentCard(checkoutSelected)) {
+          confirmSelected(checkoutSelected);
+          return;
+        }
+
+        if (isCheckoutDeleteSelection(checkoutSelected)) {
+          removeCheckoutPayment(checkoutSelected.replace('delete:', '') as PaymentMethod);
+          return;
+        }
+
+        if (checkoutSelected === 'back') {
+          setStage('selling');
+          return;
+        }
+
+        if (checkoutSelected === 'confirm') {
+          requestFinalizeCheckout();
+        }
         return;
       }
       const moves: Record<string, string> = { ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right', Tab: 'down' };
       const dir = moves[e.key];
       if (!dir) return;
+
+      const deleteMethods = checkoutPayments.map((entry) => entry.method);
+
       setCheckoutSelected(prev => {
-        const next = nav[prev]?.[dir];
-        return (next as CheckoutOption) ?? prev;
+        if (isCheckoutPaymentCard(prev)) {
+          if (prev === 'prazo' && dir === 'down') {
+            return deleteMethods.length > 0 ? getCheckoutDeleteSelection(deleteMethods[0]) : 'confirm';
+          }
+          const next = nav[prev]?.[dir];
+          return (next as CheckoutSelection) ?? prev;
+        }
+
+        if (isCheckoutDeleteSelection(prev)) {
+          const currentMethod = prev.replace('delete:', '') as PaymentMethod;
+          const currentIndex = deleteMethods.findIndex((method) => method === currentMethod);
+
+          if (dir === 'up') {
+            if (currentIndex <= 0) return 'prazo';
+            return getCheckoutDeleteSelection(deleteMethods[currentIndex - 1]);
+          }
+
+          if (dir === 'down' || dir === 'tab') {
+            if (currentIndex >= 0 && currentIndex < deleteMethods.length - 1) {
+              return getCheckoutDeleteSelection(deleteMethods[currentIndex + 1]);
+            }
+            return 'confirm';
+          }
+
+          return prev;
+        }
+
+        if (prev === 'confirm' || prev === 'back') {
+          if (dir === 'left' || dir === 'right') {
+            return prev === 'confirm' ? 'back' : 'confirm';
+          }
+
+          if (dir === 'up') {
+            return deleteMethods.length > 0
+              ? getCheckoutDeleteSelection(deleteMethods[deleteMethods.length - 1])
+              : 'prazo';
+          }
+
+          return prev;
+        }
+
+        return prev;
       });
     };
 
     window.addEventListener('keydown', handler, true);
     return () => window.removeEventListener('keydown', handler, true);
-  }, [stage, showClienteModal, showPaymentConfirm, showCashConfirm]);
+  }, [stage, showClienteModal, showPaymentConfirm, showPaymentAmountModal, checkoutPayments, checkoutSelected, checkoutSummary.restante]);
 
   // Keep pdvModalOpen in sync so Layout can skip its key handling while a modal is open
   useEffect(() => {
@@ -657,31 +1027,80 @@ export default function PDV() {
       showQuantityModal ||
       showClienteModal ||
       showPaymentConfirm ||
-      showCashConfirm ||
+      showPaymentAmountModal ||
       showRecentPrintModal ||
       postFinalizePrintJob !== null ||
       stage === 'checkout';
     return () => { pdvModalOpen = false; };
-  }, [showExitConfirm, showQuantityModal, showClienteModal, showPaymentConfirm, showCashConfirm, showRecentPrintModal, postFinalizePrintJob, stage]);
+  }, [showExitConfirm, showQuantityModal, showClienteModal, showPaymentConfirm, showPaymentAmountModal, showRecentPrintModal, postFinalizePrintJob, stage]);
 
   useEffect(() => {
     if (!showRecentPrintModal) return;
 
     const handler = (e: KeyboardEvent) => {
       if (printingRecentSale) return;
-      if (["ArrowUp", "ArrowDown", "Enter", "Escape"].includes(e.key)) {
+      if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Enter", "Escape", "Tab", "F3"].includes(e.key)) {
         e.preventDefault();
         e.stopPropagation();
       }
 
+      if (recentCancelPasswordSale) {
+        if (e.key === "Escape") {
+          setRecentCancelPasswordSale(null);
+          setRecentCancelPasswordInput("");
+          setRecentCancelPasswordError(false);
+          return;
+        }
+        if (e.key === "Enter") {
+          void submitRecentCancelPassword();
+        }
+        return;
+      }
+
+      if (recentCancelConfirmSale) {
+        if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
+          setRecentCancelActionSelected((prev) => (prev === "confirm" ? "cancel" : "confirm"));
+          return;
+        }
+        if (e.key === "Escape") {
+          setRecentCancelConfirmSale(null);
+          return;
+        }
+        if (e.key === "Enter") {
+          if (recentCancelActionSelected === "confirm") void confirmRecentSaleCancel();
+          else setRecentCancelConfirmSale(null);
+        }
+        return;
+      }
+
       if (recentPrintConfirmSale) {
+        if (e.key === "Tab") {
+          setRecentPrintSummaryExpanded((prev) => !prev);
+          return;
+        }
+        if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+          recentPrintContentScrollRef.current?.scrollBy({
+            top: e.key === "ArrowDown" ? 96 : -96,
+            behavior: "smooth",
+          });
+          return;
+        }
         if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
           setRecentPrintActionSelected((prev) => (prev === "print" ? "cancel" : "print"));
           return;
         }
         if (e.key === "Escape") {
           setRecentPrintConfirmSale(null);
+          setRecentPrintSummaryExpanded(false);
           setRecentPrintPreviewItems([]);
+          setRecentPrintPreviewPayments([]);
+          return;
+        }
+        if (e.key === "F3") {
+          setRecentPrintConfirmSale(null);
+          setRecentPrintSummaryExpanded(false);
+          setRecentPrintPreviewItems([]);
+          setRecentPrintPreviewPayments([]);
           return;
         }
         if (e.key === "Enter") {
@@ -689,7 +1108,9 @@ export default function PDV() {
             handleManualPrintSale(recentPrintConfirmSale);
           } else {
             setRecentPrintConfirmSale(null);
+            setRecentPrintSummaryExpanded(false);
             setRecentPrintPreviewItems([]);
+            setRecentPrintPreviewPayments([]);
           }
         }
         return;
@@ -697,6 +1118,12 @@ export default function PDV() {
 
       if (e.key === "Escape") {
         closeRecentPrintModal();
+        return;
+      }
+
+      if (e.key === "F3") {
+        const selectedSale = recentSales[selectedRecentSaleIndex];
+        if (selectedSale) openRecentCancelPasswordModal(selectedSale);
         return;
       }
 
@@ -712,7 +1139,7 @@ export default function PDV() {
 
     window.addEventListener("keydown", handler, true);
     return () => window.removeEventListener("keydown", handler, true);
-  }, [showRecentPrintModal, recentPrintConfirmSale, recentSales, selectedRecentSaleIndex, printingRecentSale, recentPrintActionSelected]);
+  }, [showRecentPrintModal, recentPrintConfirmSale, recentSales, selectedRecentSaleIndex, printingRecentSale, recentPrintActionSelected, recentCancelPasswordSale, recentCancelConfirmSale, recentCancelActionSelected, recentCancelPasswordInput]);
 
   useEffect(() => {
     if (!postFinalizePrintJob) return;
@@ -1020,10 +1447,21 @@ export default function PDV() {
     setClientes(rows);
   };
 
-  const handleFinalize = async (metodo: string, clienteId?: number) => {
+  const handleFinalize = async (metodo: string, clienteId?: number, pagamentosInput?: PaymentEntry[]) => {
     if (!db || cart.length === 0) return;
 
     try {
+      const pagamentosNormalizados = normalizePaymentEntries(
+        pagamentosInput && pagamentosInput.length > 0
+          ? pagamentosInput
+          : [{ method: metodo as PaymentMethod, amount: total }],
+      );
+      const prazoPayment = pagamentosNormalizados.find((payment) => payment.method === "prazo");
+      if (prazoPayment && !clienteId) {
+        alert("Selecione o cliente para registrar a parte a prazo.");
+        return;
+      }
+      const metodoResumo = getResumoMetodoPagamento(pagamentosNormalizados);
       const cartSnapshot = cart.map((item) => ({
         descricao: item.nome,
         quantidade: item.quantidade,
@@ -1048,35 +1486,44 @@ export default function PDV() {
         isoDate += "T00:00:00";
       }
 
-      if (metodo === 'prazo' && clienteId) {
-        const vendaResult = await processarVendaFIFO(db, itemsInput, 'prazo', total, isoDate);
+      if (prazoPayment && clienteId) {
+        const vendaResult = await processarVendaFIFO(db, itemsInput, metodoResumo, total, isoDate, pagamentosNormalizados);
         vendaId = Number(vendaResult.vendaId);
         const res = await db.execute(
           "INSERT INTO vendas_prazo (cliente_id, data_venda, total) VALUES ($1, $2, $3)",
-          [clienteId, isoDate, total]
+          [clienteId, isoDate, prazoPayment.amount]
         );
         const vendaIdPrazo = res.lastInsertId;
-        for (const item of cart) {
+        const proporcaoPrazo = total > 0 ? prazoPayment.amount / total : 0;
+        let totalPrazoDistribuido = 0;
+        for (const [index, item] of cart.entries()) {
+          const valorTotalItem = item.preco * item.quantidade;
+          const valorPrazoItem = index === cart.length - 1
+            ? Number((prazoPayment.amount - totalPrazoDistribuido).toFixed(2))
+            : Number((valorTotalItem * proporcaoPrazo).toFixed(2));
+          totalPrazoDistribuido += valorPrazoItem;
           await db.execute(
             "INSERT INTO vendas_prazo_itens (venda_id, produto_nome, quantidade, valor_total) VALUES ($1, $2, $3, $4)",
-            [vendaIdPrazo, item.nome, item.quantidade, item.preco * item.quantidade]
+            [vendaIdPrazo, item.nome, item.quantidade, valorPrazoItem]
           );
         }
       } else {
-        const vendaResult = await processarVendaFIFO(db, itemsInput, metodo, total, isoDate);
+        const vendaResult = await processarVendaFIFO(db, itemsInput, metodoResumo, total, isoDate, pagamentosNormalizados);
         vendaId = Number(vendaResult.vendaId);
       }
 
-      setCashPaidInput("0,00");
-      setShowCashConfirm(false);
+      closePaymentAmountModal();
       const postFinalizeState = getPostFinalizeVendaState(new Date());
       setShowPaymentConfirm(false);
+      setPendingPayment(null);
+      setCheckoutPayments([]);
       setCart([]);
       setClienteSelecionado(null);
       setShowClienteModal(false);
-      setVendaSuccess(metodo === 'prazo' ? `Venda lançada no prazo para ${clienteSelecionado?.nome}!` : 'Venda realizada com sucesso!');
+      setVendaSuccess(prazoPayment ? `Venda registrada${pagamentosNormalizados.length > 1 ? " em misto" : " a prazo"} para ${clienteSelecionado?.nome}!` : 'Venda realizada com sucesso!');
       setVendaDate(postFinalizeState.vendaDate);
       setDateDigits(postFinalizeState.dateDigits);
+      setNextSaleId(vendaId !== null ? vendaId + 1 : nextSaleId);
       setStage(postFinalizeState.stage);
 
       if (vendaId !== null) {
@@ -1088,7 +1535,7 @@ export default function PDV() {
             setPostFinalizePrintJob({
               sale: {
                 id: vendaId,
-                metodo_pagamento: metodo,
+                metodo_pagamento: metodoResumo,
                 cliente_nome: clienteNomeSnapshot,
                 data_venda: isoDate,
                 total_venda: total,
@@ -1096,6 +1543,7 @@ export default function PDV() {
               itens: cartSnapshot,
               config,
               copies,
+              payments: pagamentosNormalizados,
             });
           }
         } catch (printErr) {
@@ -1113,7 +1561,9 @@ export default function PDV() {
   const handleAPrazo = async () => {
     await loadClientes();
     setClienteSearch('');
-    setClienteSelecionado(null);
+    if (!checkoutPayments.find((entry) => entry.method === "prazo")) {
+      setClienteSelecionado(null);
+    }
     setPendingPayment({ method: 'prazo', label: 'A Prazo' });
     setShowClienteModal(true);
   };
@@ -1420,6 +1870,7 @@ export default function PDV() {
                   ) : (
                     recentSales.map((sale, index) => {
                       const selected = selectedRecentSaleIndex === index;
+                      const canceled = String(sale.status || "").toLowerCase() === "cancelada";
                       return (
                         <button
                           key={sale.id}
@@ -1427,15 +1878,19 @@ export default function PDV() {
                           onClick={() => setSelectedRecentSaleIndex(index)}
                           onDoubleClick={() => { void openRecentPrintConfirm(sale); }}
                           className={`grid w-full grid-cols-[100px_190px_1fr_120px] gap-3 px-4 py-3 text-left border-b border-white/5 transition-all ${
-                            selected
-                              ? "bg-luxury-orange/15 ring-1 ring-inset ring-luxury-orange/30"
-                              : "hover:bg-white/5"
+                            canceled
+                              ? selected
+                                ? "bg-red-500/18 ring-1 ring-inset ring-red-500/35"
+                                : "bg-red-500/10 hover:bg-red-500/14"
+                              : selected
+                                ? "bg-luxury-orange/15 ring-1 ring-inset ring-luxury-orange/30"
+                                : "hover:bg-white/5"
                           }`}
                         >
-                          <span className="font-mono text-sm text-white/50">#{sale.id}</span>
-                          <span className="font-mono text-sm text-white/70">{formatSaleDateTime(sale.data_venda)}</span>
-                          <span className={`font-bold text-sm truncate ${getSalePaymentColor(sale.metodo_pagamento)}`}>{getSalePaymentLabel(sale)}</span>
-                          <span className="text-right font-black text-white">R$ {formatCurrency(sale.total_venda)}</span>
+                          <span className={`font-mono text-sm ${canceled ? "text-red-200/80 line-through" : "text-white/50"}`}>#{sale.id}</span>
+                          <span className={`font-mono text-sm ${canceled ? "text-red-200/80 line-through" : "text-white/70"}`}>{formatSaleDateTime(sale.data_venda)}</span>
+                          <span className={`font-bold text-sm truncate ${canceled ? "text-red-200/90 line-through" : getSalePaymentColor(sale.metodo_pagamento)}`}>{getSalePaymentLabel(sale)}</span>
+                          <span className={`text-right font-black ${canceled ? "text-red-100/90 line-through" : "text-white"}`}>R$ {formatCurrency(sale.total_venda)}</span>
                         </button>
                       );
                     })
@@ -1446,6 +1901,7 @@ export default function PDV() {
               <div className="mt-4 flex items-center justify-between text-[10px] uppercase tracking-widest text-white/30 font-bold">
                 <span>↑↓ Navegar</span>
                 <span>Enter Confirmar</span>
+                <span className="text-luxury-orange">F3 Cancelar Venda</span>
                 <span>Esc Fechar</span>
               </div>
             </div>
@@ -1454,67 +1910,116 @@ export default function PDV() {
 
         {showRecentPrintModal && recentPrintConfirmSale && createPortal(
           <div
-            className="fixed inset-0 z-[230] flex items-center justify-center p-6 bg-black/75 backdrop-blur-sm"
+            className="fixed inset-0 z-[230] flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm"
             onClick={e => {
               if (e.target === e.currentTarget) {
                 setRecentPrintConfirmSale(null);
+                setRecentPrintSummaryExpanded(false);
                 setRecentPrintPreviewItems([]);
+                setRecentPrintPreviewPayments([]);
               }
             }}
           >
-            <div className="glass-card w-full max-w-[640px] p-8 text-center" onClick={e => e.stopPropagation()}>
-              <div className="w-16 h-16 rounded-full bg-luxury-orange/10 flex items-center justify-center mx-auto mb-6 border border-luxury-orange/20">
-                <Printer size={30} className="text-luxury-orange" />
-              </div>
-
-              <h3 className="text-xl font-bold text-white uppercase mb-2 tracking-tight">Imprimir Venda</h3>
-              <p className="text-white/60 text-xs mb-6 uppercase tracking-[0.1em] leading-relaxed">
-                Deseja imprimir a venda selecionada?
-                <span className="text-luxury-orange text-lg font-extrabold block mt-2">Venda #{recentPrintConfirmSale.id}</span>
-                <span className={`block mt-1 normal-case tracking-normal font-bold ${getSalePaymentColor(recentPrintConfirmSale.metodo_pagamento)}`}>{getSalePaymentLabel(recentPrintConfirmSale)}</span>
-              </p>
-
-              <div className="bg-white/[0.03] rounded-2xl p-6 mb-8 border border-white/5 text-left">
-                <p className="text-[10px] text-white/20 uppercase font-bold mb-4 tracking-widest text-center">Resumo da Compra</p>
-                <div className="rounded-xl border border-white/5 bg-black/20 mb-4 overflow-hidden">
-                  <div className="grid grid-cols-[90px_1fr_120px] gap-3 px-4 py-3 border-b border-white/5 text-[10px] uppercase tracking-widest text-white/20 font-bold">
-                    <span>Quant.</span>
-                    <span>Item</span>
-                    <span className="text-right">Preço</span>
-                  </div>
-                  <div className="max-h-[220px] overflow-auto">
-                    {recentPrintPreviewLoading ? (
-                      <div className="px-4 py-8 text-center text-xs uppercase tracking-widest text-white/30 font-bold">Carregando itens...</div>
-                    ) : recentPrintPreviewItems.length === 0 ? (
-                      <div className="px-4 py-8 text-center text-xs uppercase tracking-widest text-white/30 font-bold">Nenhum item encontrado</div>
-                    ) : (
-                      recentPrintPreviewItems.map((item) => (
-                        <div
-                          key={item.id}
-                          className="grid grid-cols-[90px_1fr_120px] gap-3 px-4 py-3 border-b border-white/5 last:border-b-0"
-                        >
-                          <span className="font-mono text-sm text-luxury-orange">{item.quantidade}x</span>
-                          <span className="text-sm font-bold text-white/80 truncate">{item.produto_nome}</span>
-                          <span className="text-right text-sm font-black text-white">R$ {formatCurrency(item.preco_unitario)}</span>
-                        </div>
-                      ))
-                    )}
-                  </div>
+            <div className="glass-card flex max-h-[min(92vh,860px)] w-full max-w-[640px] flex-col overflow-hidden p-6 text-center" onClick={e => e.stopPropagation()}>
+              <div className="mb-4 flex items-center justify-center gap-4 text-left">
+                <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full border border-luxury-orange/20 bg-luxury-orange/10">
+                  <Printer size={22} className="text-luxury-orange" />
                 </div>
-                <div className="rounded-xl border border-luxury-orange/20 bg-luxury-orange/5 px-4 py-3 text-center">
-                  <p className="text-[10px] text-white/20 uppercase font-bold mb-1 tracking-widest">Total</p>
-                  <p className="text-3xl font-bold italic text-luxury-orange tracking-tighter">
-                    R$ {recentPrintConfirmSale.total_venda.toFixed(2)}
+                <div>
+                  <h3 className="text-xl font-bold uppercase tracking-tight text-white">Imprimir Venda</h3>
+                  <p className="text-[11px] uppercase tracking-[0.1em] text-white/50">
+                    Deseja imprimir a venda selecionada?
                   </p>
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
+              <div className="mb-6 rounded-2xl border border-luxury-orange/15 bg-luxury-orange/5 px-5 py-4 text-left">
+                <div className="flex items-center justify-between gap-4">
+                  <div>
+                    <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-white/30">Venda</p>
+                    <p className="text-2xl font-extrabold text-luxury-orange">#{recentPrintConfirmSale.id}</p>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-white/30">Total</p>
+                    <p className="text-2xl font-extrabold text-white">R$ {recentPrintConfirmSale.total_venda.toFixed(2)}</p>
+                  </div>
+                </div>
+              </div>
+
+              <div ref={recentPrintContentScrollRef} className="mb-6 min-h-0 flex-1 overflow-y-auto pr-1">
+                <div className="rounded-2xl border border-white/5 bg-white/[0.03] text-left">
+                  <div className="px-5 pb-5 pt-4">
+                    {recentPrintPreviewPayments.length > 0 && (
+                      <div className="mb-4 rounded-xl border border-white/5 bg-black/20 overflow-hidden">
+                        <button
+                          type="button"
+                          onClick={() => setRecentPrintSummaryExpanded((prev) => !prev)}
+                          className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left transition-colors hover:bg-white/[0.02]"
+                        >
+                          <div>
+                            <p className="text-[10px] font-bold uppercase tracking-widest text-white/20">Pagamentos</p>
+                            <p className="mt-1 text-sm font-semibold text-white/60">
+                              {recentPrintSummaryExpanded ? "Ocultar formas de pagamento" : "Ver formas de pagamento"}
+                            </p>
+                          </div>
+                          <div className="flex h-9 w-9 items-center justify-center rounded-full border border-white/10 bg-black/20 text-white/60">
+                            {recentPrintSummaryExpanded ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
+                          </div>
+                        </button>
+
+                        {recentPrintSummaryExpanded && (
+                          <div className="grid gap-2 border-t border-white/5 px-4 pb-4 pt-3">
+                            {recentPrintPreviewPayments.map((payment) => (
+                              <div
+                                key={`${payment.metodo}-${payment.id}`}
+                                className="flex items-center justify-between rounded-lg border border-white/5 bg-white/[0.03] px-3 py-2"
+                              >
+                                <span className="text-sm font-bold text-white/80">{getPaymentMethodLabel(payment.metodo)}</span>
+                                <span className="text-sm font-extrabold text-luxury-orange">R$ {payment.valor.toFixed(2)}</span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    <div className="rounded-xl border border-white/5 bg-black/20 overflow-hidden">
+                      <div className="grid grid-cols-[90px_1fr_120px] gap-3 border-b border-white/5 px-4 py-3 text-[10px] font-bold uppercase tracking-widest text-white/20">
+                        <span>Quant.</span>
+                        <span>Item</span>
+                        <span className="text-right">Preço</span>
+                      </div>
+                      <div className="max-h-[280px] overflow-auto">
+                        {recentPrintPreviewLoading ? (
+                          <div className="px-4 py-8 text-center text-xs font-bold uppercase tracking-widest text-white/30">Carregando itens...</div>
+                        ) : recentPrintPreviewItems.length === 0 ? (
+                          <div className="px-4 py-8 text-center text-xs font-bold uppercase tracking-widest text-white/30">Nenhum item encontrado</div>
+                        ) : (
+                            recentPrintPreviewItems.map((item) => (
+                              <div
+                                key={item.id}
+                                className="grid grid-cols-[90px_1fr_120px] gap-3 border-b border-white/5 px-4 py-3 last:border-b-0"
+                              >
+                              <span className="font-mono text-sm text-luxury-orange">{item.quantidade}x</span>
+                              <span className="truncate text-sm font-bold text-white/80">{item.produto_nome}</span>
+                              <span className="text-right text-sm font-black text-white">R$ {formatCurrency(item.preco_unitario)}</span>
+                            </div>
+                          ))
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="grid shrink-0 grid-cols-2 gap-3">
                 <button
                   type="button"
                   onClick={() => {
                     setRecentPrintConfirmSale(null);
+                    setRecentPrintSummaryExpanded(false);
                     setRecentPrintPreviewItems([]);
+                    setRecentPrintPreviewPayments([]);
                   }}
                   className={`h-12 rounded-xl font-bold uppercase text-[10px] tracking-widest transition-all ${
                     recentPrintActionSelected === "cancel"
@@ -1535,6 +2040,85 @@ export default function PDV() {
                   }`}
                 >
                   IMPRIMIR (ENTER)
+                </button>
+              </div>
+            </div>
+          </div>, document.body
+        )}
+
+        {showRecentPrintModal && recentCancelPasswordSale && createPortal(
+          <div className="fixed inset-0 z-[235] flex items-center justify-center p-6 bg-black/80 backdrop-blur-sm">
+            <div className="glass-card w-full max-w-[420px] p-6" onClick={e => e.stopPropagation()}>
+              <h3 className="text-lg font-black uppercase text-luxury-orange mb-2">Senha Admin</h3>
+              <p className="text-sm text-white/60 mb-4">Digite a senha para cancelar a venda #{recentCancelPasswordSale.id}.</p>
+              <input
+                ref={recentCancelPasswordInputRef}
+                type="password"
+                value={recentCancelPasswordInput}
+                onChange={(e) => {
+                  setRecentCancelPasswordInput(sanitizeAccessPassword(e.target.value));
+                  setRecentCancelPasswordError(false);
+                }}
+                className={`luxury-input w-full h-12 text-center text-lg font-black ${recentCancelPasswordError ? "border-red-500/50 bg-red-500/5 text-red-400" : ""}`}
+                maxLength={4}
+                autoFocus
+              />
+              {recentCancelPasswordError && (
+                <p className="mt-3 text-xs font-bold uppercase tracking-widest text-red-400">Senha invalida</p>
+              )}
+              <div className="mt-5 grid grid-cols-2 gap-3">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setRecentCancelPasswordSale(null);
+                    setRecentCancelPasswordInput("");
+                    setRecentCancelPasswordError(false);
+                  }}
+                  className="h-12 rounded-xl border border-white/10 text-white/60 font-bold uppercase text-xs hover:bg-white/5"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void submitRecentCancelPassword()}
+                  className="h-12 rounded-xl bg-luxury-orange text-white font-bold uppercase text-xs"
+                >
+                  Confirmar
+                </button>
+              </div>
+            </div>
+          </div>, document.body
+        )}
+
+        {showRecentPrintModal && recentCancelConfirmSale && createPortal(
+          <div className="fixed inset-0 z-[236] flex items-center justify-center p-6 bg-black/80 backdrop-blur-sm">
+            <div className="glass-card w-full max-w-[460px] p-6 text-center" onClick={e => e.stopPropagation()}>
+              <h3 className="text-xl font-black uppercase text-white mb-3">Cancelar Venda</h3>
+              <p className="text-sm text-white/60 mb-6">
+                Deseja cancelar a venda #{recentCancelConfirmSale.id} - R$ {formatCurrency(recentCancelConfirmSale.total_venda)}?
+              </p>
+              <div className="grid grid-cols-2 gap-3">
+                <button
+                  type="button"
+                  onClick={() => setRecentCancelConfirmSale(null)}
+                  className={`h-12 rounded-xl border font-bold uppercase text-xs transition-all ${
+                    recentCancelActionSelected === "cancel"
+                      ? "border-white/30 bg-white/10 text-white ring-2 ring-white/15"
+                      : "border-white/10 text-white/60"
+                  }`}
+                >
+                  Nao
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void confirmRecentSaleCancel()}
+                  className={`h-12 rounded-xl font-bold uppercase text-xs transition-all ${
+                    recentCancelActionSelected === "confirm"
+                      ? "bg-red-600 text-white ring-2 ring-red-400/30"
+                      : "bg-red-600/85 text-white"
+                  }`}
+                >
+                  Sim
                 </button>
               </div>
             </div>
@@ -1602,7 +2186,7 @@ export default function PDV() {
   // Stage: Checkout
   const coSel = (id: CheckoutOption) => checkoutSelected === id;
   const coBtn = (id: CheckoutOption, extra?: string) =>
-    `flex items-center gap-4 p-4 rounded-xl border transition-all text-left outline-none ${
+    `flex items-center gap-3 p-3 rounded-xl border transition-all text-left outline-none ${
       coSel(id)
         ? 'bg-luxury-orange border-luxury-orange shadow-lg shadow-luxury-orange/20'
         : `bg-white/5 border-white/5 hover:bg-white/10 ${extra ?? ''}`
@@ -1611,38 +2195,170 @@ export default function PDV() {
   if (stage === 'checkout') {
     return (
       <>
-      <div className="flex flex-col h-full justify-center items-center p-4">
-        <div className="w-full max-w-xl flex flex-col gap-4">
-          <div className="flex gap-3">
-            <div className="glass-card px-5 py-4 flex flex-col items-center justify-center min-w-[80px]">
-              <p className="text-[10px] uppercase text-white/40 font-bold mb-1">Itens</p>
-              <p className="text-2xl font-black">{cart.length}</p>
+      <div className="flex h-full min-h-0 flex-col items-center overflow-y-auto px-3 py-2.5">
+        <div className="flex w-full max-w-[820px] flex-col gap-2 pb-2">
+          <div className="flex gap-2">
+            <div className="glass-card flex min-w-[68px] flex-col items-center justify-center px-3 py-2">
+              <p className="mb-0.5 text-[10px] font-bold uppercase text-white/40">Itens</p>
+              <p className="text-xl font-black">{cart.length}</p>
             </div>
-            <div className="glass-card flex-1 px-5 py-4"><p className="text-[10px] uppercase text-white/40 font-bold mb-1">Data</p><p className="text-lg font-black">{vendaDate}</p></div>
-            <div className="glass-card flex-[2] px-5 py-4 border border-luxury-orange/30 bg-luxury-orange/5"><p className="text-[10px] uppercase text-white/40 font-bold mb-1">Total a Pagar</p><p className="text-3xl font-black text-luxury-orange">R$ {total.toFixed(2)}</p></div>
+            <div className="glass-card flex flex-1 flex-col items-center justify-center px-4 py-2 text-center">
+              {nextSaleId !== null && (
+                <p className="mb-0.5 text-[11px] font-bold uppercase tracking-[0.14em] text-white/50">
+                  Pedido #{nextSaleId}
+                </p>
+              )}
+              <p className="mb-0.5 text-[10px] font-bold uppercase text-white/40">Data</p>
+              <p className="text-base font-black">{vendaDate}</p>
+            </div>
+            <div className="glass-card flex-[2] border border-luxury-orange/30 bg-luxury-orange/5 px-4 py-2">
+              <p className="mb-0.5 text-[10px] font-bold uppercase text-white/40">Total a Pagar</p>
+              <p className="text-[2rem] font-black leading-none text-luxury-orange">R$ {total.toFixed(2)}</p>
+              <div className="mt-1 grid grid-cols-3 gap-2 text-[10px] uppercase">
+                <div>
+                  <p className="text-white/30 font-bold">Lançado</p>
+                  <p className="text-white font-black text-sm normal-case">R$ {checkoutSummary.totalLancado.toFixed(2)}</p>
+                </div>
+                <div>
+                  <p className="text-white/30 font-bold">Restante</p>
+                  <p className={`font-black text-sm normal-case ${checkoutSummary.restante > 0 ? "text-yellow-400" : "text-green-400"}`}>R$ {checkoutSummary.restante.toFixed(2)}</p>
+                </div>
+                <div>
+                  <p className="text-white/30 font-bold">Troco</p>
+                  <p className="text-green-400 font-black text-sm normal-case">R$ {checkoutSummary.troco.toFixed(2)}</p>
+                </div>
+              </div>
+            </div>
           </div>
 
           <div>
-            <p className="text-[10px] uppercase text-white/40 font-bold mb-3 px-1">Forma de Pagamento</p>
-            <div className="grid grid-cols-2 gap-3 mb-3">
+            <p className="mb-1.5 px-1 text-[10px] font-bold uppercase text-white/40">Lançar Pagamentos</p>
+            <div className="mb-1.5 grid grid-cols-2 gap-2">
               {([
-                { id: 'dinheiro' as CheckoutOption, label: 'Dinheiro', sub: 'À vista em espécie',       icon: Banknote   },
-                { id: 'pix'      as CheckoutOption, label: 'PIX',      sub: 'Transferência instantânea', icon: QrCode     },
-                { id: 'credito'  as CheckoutOption, label: 'Crédito',  sub: 'Cartão de crédito',        icon: CreditCard },
-                { id: 'debito'   as CheckoutOption, label: 'Débito',   sub: 'Cartão de débito',         icon: Smartphone },
+                { id: 'dinheiro' as CheckoutOption, label: 'Dinheiro', icon: Banknote   },
+                { id: 'pix'      as CheckoutOption, label: 'PIX',      icon: QrCode     },
+                { id: 'credito'  as CheckoutOption, label: 'Crédito',  icon: CreditCard },
+                { id: 'debito'   as CheckoutOption, label: 'Débito',   icon: Smartphone },
               ] as const).map(m => (
-                <button key={m.id} onClick={() => requestFinalize(m.id, m.label)} className={coBtn(m.id)}>
+                <button key={m.id} onClick={() => openPaymentAmountModal(m.id)} className={coBtn(m.id)}>
                   <div className={`w-10 h-10 rounded-lg flex items-center justify-center shrink-0 ${coSel(m.id) ? 'bg-white/20' : 'bg-luxury-orange/10'}`}><m.icon size={20} className={coSel(m.id) ? 'text-white' : 'text-luxury-orange'} /></div>
-                  <div><p className={`font-black uppercase text-sm ${coSel(m.id) ? 'text-white' : ''}`}>{m.label}</p><p className={`text-[10px] ${coSel(m.id) ? 'text-white/70' : 'text-white/40'}`}>{m.sub}</p></div>
+                  <div className="grid min-w-0 flex-1 grid-cols-[minmax(0,1fr)_auto] items-center gap-3">
+                    <p className={`min-w-0 text-left font-black uppercase text-sm ${coSel(m.id) ? 'text-white' : ''}`}>{m.label}</p>
+                    {checkoutPayments.find((entry) => entry.method === m.id) && (
+                      <p className={`shrink-0 text-[15px] font-extrabold ${coSel(m.id) ? 'text-white' : 'text-luxury-orange'}`}>
+                        R$ {checkoutPayments.find((entry) => entry.method === m.id)?.amount.toFixed(2)}
+                      </p>
+                    )}
+                  </div>
                 </button>
               ))}
             </div>
-            <button onClick={handleAPrazo} className={`w-full mb-3 ${coBtn('prazo')}`}>
-              <div className={`w-10 h-10 rounded-lg flex items-center justify-center shrink-0 ${coSel('prazo') ? 'bg-white/20' : 'bg-luxury-orange/10'}`}><Clock size={20} className={coSel('prazo') ? 'text-white' : 'text-luxury-orange'} /></div>
-              <div><p className={`font-black uppercase text-sm ${coSel('prazo') ? 'text-white' : 'text-luxury-orange'}`}>A Prazo</p><p className={`text-[10px] ${coSel('prazo') ? 'text-white/70' : 'text-white/40'}`}>Registrar como fiado — selecionar cliente</p></div>
+            <button onClick={handleAPrazo} className={`w-full mb-1.5 ${coBtn('prazo')}`}>
+              <div className="grid w-full grid-cols-[64px_minmax(0,1fr)_132px] items-center gap-4">
+                <div className={`flex w-16 flex-col items-center justify-center rounded-xl py-2 ${coSel('prazo') ? 'bg-white/20' : 'bg-luxury-orange/10'}`}>
+                  <Clock size={20} className={coSel('prazo') ? 'text-white' : 'text-luxury-orange'} />
+                  <span className={`mt-1 text-[10px] font-black uppercase tracking-[0.12em] ${coSel('prazo') ? 'text-white' : 'text-luxury-orange'}`}>A Prazo</span>
+                </div>
+                <div className="flex min-w-0 items-center justify-center px-3 text-center">
+                    {clienteSelecionado ? (
+                      <p className={`truncate text-base font-semibold leading-tight ${coSel('prazo') ? 'text-white' : 'text-white'}`}>{clienteSelecionado.nome}</p>
+                    ) : (
+                      <p className={`text-sm font-medium leading-tight ${coSel('prazo') ? 'text-white/75' : 'text-white/45'}`}>Selecionar cliente para fiado</p>
+                    )}
+                </div>
+                <div className="flex h-full w-[132px] items-center justify-end pr-1 text-right">
+                    {checkoutPayments.find((entry) => entry.method === "prazo") ? (
+                      <div className="text-right">
+                        <p className={`text-[10px] font-bold uppercase tracking-[0.12em] ${coSel('prazo') ? 'text-white/75' : 'text-white/35'}`}>Total</p>
+                        <p className={`text-lg font-bold leading-tight ${coSel('prazo') ? 'text-white' : 'text-luxury-orange'}`}>
+                          R$ {checkoutPayments.find((entry) => entry.method === "prazo")?.amount.toFixed(2)}
+                        </p>
+                      </div>
+                    ) : (
+                      <p className={`text-[11px] font-semibold uppercase tracking-[0.12em] ${coSel('prazo') ? 'text-white/70' : 'text-white/35'}`}>
+                        Sem valor
+                      </p>
+                    )}
+                </div>
+              </div>
             </button>
           </div>
-          <button onClick={() => setStage('selling')} className="w-full h-9 border border-white/10 hover:bg-white/5 rounded-lg uppercase text-xs font-bold text-white/40 hover:text-white transition-all">Voltar (ESC)</button>
+          <div className="glass-card flex h-[220px] min-h-[220px] shrink-0 flex-col p-2.5">
+            <div className="mb-2 flex items-center justify-between">
+              <p className="text-[10px] uppercase text-white/40 font-bold">Pagamentos Lançados</p>
+              {checkoutPayments.length > 0 && (
+                <button
+                  type="button"
+                  onClick={clearCheckoutPayments}
+                  className="text-[10px] uppercase font-bold tracking-widest text-red-400 hover:text-red-300 transition-colors"
+                >
+                  Limpar
+                </button>
+              )}
+            </div>
+            <div className="grid auto-rows-min content-start grid-cols-2 gap-2 pr-1">
+              {checkoutPayments.length === 0 ? (
+                <p className="col-span-2 text-sm text-white/30">Nenhum pagamento lançado ainda.</p>
+              ) : (
+                checkoutPayments.map((entry) => (
+                  <div
+                    key={entry.method}
+                    className={`flex min-h-[52px] self-start items-center justify-between gap-2 rounded-xl border px-3 py-2 transition-all ${
+                      checkoutSelected === getCheckoutDeleteSelection(entry.method)
+                        ? "border-red-400/50 bg-red-500/10 ring-1 ring-red-400/30"
+                        : "border-white/5 bg-white/[0.03]"
+                    }`}
+                  >
+                    <div>
+                      <p className="text-[13px] font-black uppercase text-white">{getPaymentMethodLabel(entry.method)}</p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <p className="text-[15px] font-black text-luxury-orange">R$ {entry.amount.toFixed(2)}</p>
+                      <button
+                        type="button"
+                        onClick={() => removeCheckoutPayment(entry.method)}
+                        onFocus={() => setCheckoutSelected(getCheckoutDeleteSelection(entry.method))}
+                        className={`rounded-lg border p-1.5 transition-all ${
+                          checkoutSelected === getCheckoutDeleteSelection(entry.method)
+                            ? "border-red-400/40 bg-red-500/20 text-red-300"
+                            : "border-red-500/20 bg-red-500/10 text-red-400 hover:bg-red-500/20"
+                        }`}
+                      >
+                        <Trash2 size={13} />
+                      </button>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <button
+              type="button"
+              onClick={() => setStage('selling')}
+              className={`h-12 rounded-xl border uppercase text-xs font-bold transition-all ${
+                checkoutSelected === "back"
+                  ? "border-white/30 bg-white/10 text-white ring-2 ring-white/15"
+                  : "border-white/10 text-white/40 hover:bg-white/5 hover:text-white"
+              }`}
+            >
+              Voltar (Esc)
+            </button>
+            <button
+              type="button"
+              disabled={!checkoutSummary.isComplete || (checkoutPayments.some((entry) => entry.method === "prazo") && !clienteSelecionado)}
+              onClick={requestFinalizeCheckout}
+              className={`h-12 rounded-xl uppercase text-sm font-black tracking-widest transition-all ${
+                checkoutSummary.isComplete && !(checkoutPayments.some((entry) => entry.method === "prazo") && !clienteSelecionado)
+                  ? checkoutSelected === "confirm"
+                    ? "bg-luxury-orange text-white ring-2 ring-white/25 shadow-lg shadow-luxury-orange/30"
+                    : "bg-luxury-orange text-white shadow-lg shadow-luxury-orange/20"
+                  : "bg-white/10 text-white/30 cursor-not-allowed"
+              }`}
+            >
+              Confirmar Pagamentos (F1)
+            </button>
+          </div>
         </div>
       </div>
 
@@ -1671,7 +2387,7 @@ export default function PDV() {
             </div>
             <div className="flex gap-3">
               <button onClick={() => setShowClienteModal(false)} className="flex-1 h-12 border border-white/10 rounded-xl hover:bg-white/5 uppercase text-xs font-bold text-white/40 hover:text-white transition-all">Cancelar</button>
-              <button disabled={!clienteSelecionado} onClick={() => clienteSelecionado && setShowPaymentConfirm(true)} className="btn-primary flex-1 h-12 disabled:opacity-40 disabled:cursor-not-allowed">Confirmar</button>
+              <button disabled={!clienteSelecionado} onClick={confirmClienteSelection} className="btn-primary flex-1 h-12 disabled:opacity-40 disabled:cursor-not-allowed">Confirmar</button>
             </div>
           </div>
         </div>, document.body
@@ -1695,7 +2411,7 @@ export default function PDV() {
             if (e.key === 'Enter') { 
               e.preventDefault(); 
               if (confirmActionSelected === 'confirm') {
-                handleFinalize(pendingPayment.method, clienteSelecionado?.id); 
+                handleFinalize(pendingPayment.method, clienteSelecionado?.id, checkoutPayments); 
               } else {
                 setShowPaymentConfirm(false);
               }
@@ -1723,6 +2439,20 @@ export default function PDV() {
               </p>
             </div>
 
+            {pendingPayment.method !== "prazo" && checkoutPaymentLines.length > 0 && (
+              <div className="mb-8 rounded-2xl border border-white/5 bg-white/[0.03] p-4 text-left">
+                <p className="text-[10px] text-white/20 uppercase font-bold mb-3 tracking-widest">Pagamentos</p>
+                <div className="space-y-2">
+                  {checkoutPaymentLines.map((line) => (
+                    <div key={line} className="flex items-center justify-between gap-2 text-sm font-bold text-white/80">
+                      <span>{line.split(":")[0]}</span>
+                      <span className="text-luxury-orange">{line.split(": ")[1]}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
             <div className="grid grid-cols-2 gap-3">
               <button
                 type="button"
@@ -1737,7 +2467,7 @@ export default function PDV() {
               </button>
               <button
                 type="button"
-                onClick={() => handleFinalize(pendingPayment.method, clienteSelecionado?.id)}
+                onClick={() => handleFinalize(pendingPayment.method, clienteSelecionado?.id, checkoutPayments)}
                 className={`h-12 rounded-xl font-bold italic uppercase tracking-widest text-[10px] transition-all ${
                   confirmActionSelected === 'confirm'
                     ? 'bg-luxury-orange text-white ring-2 ring-white/50 shadow-lg shadow-luxury-orange/40 scale-[1.02]'
@@ -1752,10 +2482,10 @@ export default function PDV() {
         document.body
       )}
 
-      {showCashConfirm && createPortal(
+      {showPaymentAmountModal && paymentAmountMethod && createPortal(
         <div
           className="fixed inset-0 z-[300] flex items-center justify-center p-6 bg-black/90 backdrop-blur-md"
-          onClick={e => { if (e.target === e.currentTarget) closeCashConfirm(); }}
+          onClick={e => { if (e.target === e.currentTarget) closePaymentAmountModal(); }}
         >
           <div
             className="glass-card w-full max-w-[420px] p-8 text-center animate-in zoom-in duration-200 border-white/10"
@@ -1764,45 +2494,75 @@ export default function PDV() {
               e.stopPropagation();
               if (e.key === "Escape") {
                 e.preventDefault();
-                closeCashConfirm();
+                closePaymentAmountModal();
                 return;
               }
-              if (e.key === "Enter" && cashSummary.isEnough) {
+              if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
                 e.preventDefault();
-                handleFinalize("dinheiro");
+                setPaymentAmountActionSelected((prev) => (prev === "confirm" ? "cancel" : "confirm"));
+                return;
+              }
+              if (e.key === "Enter") {
+                e.preventDefault();
+                if (paymentAmountActionSelected === "confirm") {
+                  confirmPaymentAmount();
+                } else {
+                  closePaymentAmountModal();
+                }
               }
             }}
           >
             <div className="w-16 h-16 rounded-full bg-luxury-orange/10 flex items-center justify-center mx-auto mb-6 border border-luxury-orange/20">
-              <Banknote size={32} className="text-luxury-orange" />
+              {paymentAmountMethod === "dinheiro" ? (
+                <Banknote size={32} className="text-luxury-orange" />
+              ) : paymentAmountMethod === "pix" ? (
+                <QrCode size={32} className="text-luxury-orange" />
+              ) : paymentAmountMethod === "credito" ? (
+                <CreditCard size={32} className="text-luxury-orange" />
+              ) : (
+                <Smartphone size={32} className="text-luxury-orange" />
+              )}
             </div>
 
-            <h3 className="text-xl font-bold text-white uppercase mb-2 tracking-tight">Pagamento em Dinheiro</h3>
-            <p className="text-white/60 text-xs mb-6 uppercase tracking-[0.1em]">Informe quanto o cliente pagou</p>
+            <h3 className="text-xl font-bold text-white uppercase mb-2 tracking-tight">
+              Lançar {getPaymentMethodLabel(paymentAmountMethod)}
+            </h3>
+            <p className="text-white/60 text-xs mb-6 uppercase tracking-[0.1em]">
+              {currentMethodPayment ? "Atualize o valor lançado" : "Informe o valor deste pagamento"}
+            </p>
 
             <div className="grid grid-cols-2 gap-3 mb-4 text-left">
               <div className="bg-white/[0.03] rounded-2xl p-4 border border-white/5">
-                <p className="text-[10px] text-white/20 uppercase font-bold mb-1 tracking-widest">Total</p>
-                <p className="text-2xl font-bold italic text-luxury-orange">R$ {total.toFixed(2)}</p>
+                <p className="text-[10px] text-white/20 uppercase font-bold mb-1 tracking-widest">Restante</p>
+                <p className="text-2xl font-bold italic text-luxury-orange">R$ {checkoutSummary.restante.toFixed(2)}</p>
               </div>
               <div className="bg-white/[0.03] rounded-2xl p-4 border border-white/5">
-                <p className="text-[10px] text-white/20 uppercase font-bold mb-1 tracking-widest">Troco</p>
-                <p className="text-2xl font-bold italic text-green-400">R$ {cashSummary.troco.toFixed(2)}</p>
+                <p className="text-[10px] text-white/20 uppercase font-bold mb-1 tracking-widest">
+                  {paymentAmountMethod === "dinheiro" ? "Troco" : "Lançado atual"}
+                </p>
+                <p className={`text-2xl font-bold italic ${paymentAmountMethod === "dinheiro" ? "text-green-400" : "text-white"}`}>
+                  R$ {(paymentAmountMethod === "dinheiro" ? amountModalSummary.troco : currentMethodPayment?.amount || 0).toFixed(2)}
+                </p>
               </div>
             </div>
 
             <div className="mb-6 text-left">
-              <label className="text-[10px] uppercase text-white/30 font-bold mb-2 block tracking-widest">Valor Pago</label>
+              <label className="text-[10px] uppercase text-white/30 font-bold mb-2 block tracking-widest">Valor</label>
               <input
-                ref={cashPaidRef}
+                ref={paymentAmountRef}
                 type="text"
-                value={cashPaidInput}
-                onChange={e => setCashPaidInput(handleCurrencyInput(e.target.value))}
+                value={paymentAmountInput}
+                onChange={e => setPaymentAmountInput(handleCurrencyInput(e.target.value))}
                 className="luxury-input w-full h-14 text-center text-2xl font-black text-luxury-orange"
               />
-              {!cashSummary.isEnough && (
+              {paymentAmountMethod === "dinheiro" && !amountModalSummary.isEnough && (
                 <p className="text-red-400 text-xs mt-3 font-bold uppercase tracking-[0.1em]">
-                  Faltam R$ {cashSummary.falta.toFixed(2)}
+                  Faltam R$ {amountModalSummary.falta.toFixed(2)}
+                </p>
+              )}
+              {paymentAmountMethod !== "dinheiro" && parseCurrencyToNumber(paymentAmountInput) > checkoutSummary.restante + (currentMethodPayment?.amount || 0) && (
+                <p className="text-red-400 text-xs mt-3 font-bold uppercase tracking-[0.1em]">
+                  Valor maior que o restante da venda.
                 </p>
               )}
             </div>
@@ -1810,22 +2570,34 @@ export default function PDV() {
             <div className="grid grid-cols-2 gap-3">
               <button
                 type="button"
-                onClick={closeCashConfirm}
-                className="h-12 rounded-xl font-bold uppercase text-[10px] tracking-widest bg-red-600/10 text-red-400 border border-red-500/10 hover:bg-red-600/20 transition-all"
+                onClick={closePaymentAmountModal}
+                className={`h-12 rounded-xl font-bold uppercase text-[10px] tracking-widest transition-all ${
+                  paymentAmountActionSelected === "cancel"
+                    ? "bg-red-600 text-white ring-2 ring-white/50 shadow-lg shadow-red-600/20 scale-[1.02]"
+                    : "bg-red-600/10 text-red-400 border border-red-500/10 hover:bg-red-600/20"
+                }`}
               >
                 CANCELAR (ESC)
               </button>
               <button
                 type="button"
-                disabled={!cashSummary.isEnough}
-                onClick={() => handleFinalize("dinheiro")}
+                disabled={
+                  parseCurrencyToNumber(paymentAmountInput) <= 0 ||
+                  (paymentAmountMethod !== "dinheiro" &&
+                    parseCurrencyToNumber(paymentAmountInput) > checkoutSummary.restante + (currentMethodPayment?.amount || 0))
+                }
+                onClick={confirmPaymentAmount}
                 className={`h-12 rounded-xl font-bold italic uppercase tracking-widest text-[10px] transition-all ${
-                  cashSummary.isEnough
-                    ? "bg-luxury-orange text-white ring-2 ring-white/20 shadow-lg shadow-luxury-orange/30"
+                  parseCurrencyToNumber(paymentAmountInput) > 0 &&
+                  (paymentAmountMethod === "dinheiro" ||
+                    parseCurrencyToNumber(paymentAmountInput) <= checkoutSummary.restante + (currentMethodPayment?.amount || 0))
+                    ? paymentAmountActionSelected === "confirm"
+                      ? "bg-luxury-orange text-white ring-2 ring-white/20 shadow-lg shadow-luxury-orange/30 scale-[1.02]"
+                      : "bg-luxury-orange/20 text-luxury-orange/60"
                     : "bg-white/10 text-white/30 cursor-not-allowed"
                 }`}
               >
-                CONFIRMAR (ENTER)
+                LANÇAR (ENTER)
               </button>
             </div>
           </div>

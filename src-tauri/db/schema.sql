@@ -60,6 +60,17 @@ CREATE TABLE IF NOT EXISTS venda_itens (
     FOREIGN KEY (lote_id) REFERENCES lotes(id)
 );
 
+CREATE TABLE IF NOT EXISTS venda_pagamentos (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    venda_id INTEGER NOT NULL,
+    metodo TEXT NOT NULL,
+    valor REAL NOT NULL,
+    ordem INTEGER NOT NULL DEFAULT 0,
+    FOREIGN KEY (venda_id) REFERENCES vendas(id)
+);
+
 -- Index for FIFO lookups
 CREATE INDEX IF NOT EXISTS idx_lotes_validade ON lotes(produto_id, data_validade ASC) WHERE status = 'ativo' AND qtd_atual > 0;
 CREATE INDEX IF NOT EXISTS idx_produtos_barras ON produtos(codigo_barras);
+CREATE INDEX IF NOT EXISTS idx_venda_pagamentos_venda ON venda_pagamentos(venda_id, ordem);
+CREATE INDEX IF NOT EXISTS idx_venda_pagamentos_metodo ON venda_pagamentos(metodo);

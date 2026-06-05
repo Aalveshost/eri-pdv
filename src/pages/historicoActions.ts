@@ -14,6 +14,7 @@ export interface HistoricoPrintPayload {
   dataVenda: string;
   total: number;
   itens: HistoricoPrintItem[];
+  paymentDetails?: string[];
 }
 
 export type HistoricoPaperWidth = 58 | 80;
@@ -100,6 +101,9 @@ export function buildHistoricoPrintHtml(payload: HistoricoPrintPayload) {
 
 export function buildHistoricoPrintText(payload: HistoricoPrintPayload, paperWidth: HistoricoPaperWidth = 58) {
   const sep = "-".repeat(paperWidth === 80 ? 48 : 32);
+  const paymentDetails = payload.paymentDetails && payload.paymentDetails.length > 0
+    ? ["Pagamentos:", ...payload.paymentDetails].join("\n")
+    : null;
   const itens = payload.itens.length > 0
     ? payload.itens.map((item) => {
         const unit = formatMoney(item.valorUnitario ?? item.valorTotal);
@@ -113,10 +117,12 @@ export function buildHistoricoPrintText(payload: HistoricoPrintPayload, paperWid
     payload.subtitulo,
     `Data: ${payload.dataVenda}`,
     sep,
+    paymentDetails,
+    paymentDetails ? sep : null,
     itens,
     sep,
     `Total: R$ ${formatMoney(payload.total)}`,
-  ].join("\n");
+  ].filter(Boolean).join("\n");
 }
 
 function formatMoney(value: number) {

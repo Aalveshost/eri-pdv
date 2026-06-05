@@ -239,12 +239,22 @@ export default function ProducaoPage() {
       const prodRes: any[] = await db.select("SELECT id, nome FROM produtos WHERE ativo = 1 ORDER BY nome ASC");
       setProdutos(prodRes);
       const producoesRes: any[] = await db.select(`SELECT l.id, l.produto_id, COALESCE(p.nome, l.produto_avulso_nome) as produto_nome, l.data_fabricacao as data_producao, l.qtd_inicial as qtd_produzida, COALESCE(l.qtd_vendida, 0) as qtd_vendida_lote FROM lotes l LEFT JOIN produtos p ON l.produto_id = p.id WHERE date(l.data_fabricacao) = date($1) ORDER BY l.id DESC`, [selectedDate]);
-      const vendasRes: any[] = await db.select(`SELECT vi.produto_id, SUM(vi.quantidade) as total_vendido FROM venda_itens vi JOIN vendas v ON v.id = vi.venda_id WHERE date(v.data_venda) = date($1) GROUP BY vi.produto_id`, [selectedDate]);
+      const vendasRes: any[] = await db.select(`SELECT vi.produto_id, SUM(vi.quantidade) as total_vendido FROM venda_itens vi JOIN vendas v ON v.id = vi.venda_id WHERE date(v.data_venda) = date($1) AND COALESCE(LOWER(v.status), 'completa') = 'completa' GROUP BY vi.produto_id`, [selectedDate]);
       const vendasMap: Record<number, number> = {};
       vendasRes.forEach(v => { if (v.produto_id) vendasMap[v.produto_id] = v.total_vendido; });
       const finalData = producoesRes.map(p => {
         const totalVendidoDia = p.produto_id ? (vendasMap[p.produto_id] || 0) : 0;
-        return { id: p.id, produto_id: p.produto_id, produto_nome: p.produto_nome, data_producao: p.data_producao, qtd_produzida: p.qtd_produzida, qtd_vendida: totalVendidoDia, qtd_vendida_lote: p.qtd_vendida_lote, sobra: p.qtd_produzida - totalVendidoDia };
+        const vendidoLimitado = Math.min(totalVendidoDia, p.qtd_produzida);
+        return {
+          id: p.id,
+          produto_id: p.produto_id,
+          produto_nome: p.produto_nome,
+          data_producao: p.data_producao,
+          qtd_produzida: p.qtd_produzida,
+          qtd_vendida: totalVendidoDia,
+          qtd_vendida_lote: p.qtd_vendida_lote,
+          sobra: Math.max(0, p.qtd_produzida - vendidoLimitado),
+        };
       });
       setProducoes(finalData);
     } catch (err) { console.error(err); }
@@ -390,12 +400,27 @@ export default function ProducaoPage() {
 
   const totalProduzido = producoes.reduce((acc, p) => acc + p.qtd_produzida, 0);
   const totalVendido = producoes.reduce((acc, p) => acc + p.qtd_vendida, 0);
-  const totalSobras = producoes.reduce((acc, p) => acc + p.sobra, 0);
+  const totalSobras = producoes.reduce((acc, p) => acc + Math.max(0, p.sobra), 0);
+  const totalVendidoLimitado = Math.min(totalVendido, totalProduzido);
+  const temExcessoVendido = totalVendido > totalProduzido;
 
   const groupedProducoes = producoes.reduce((acc, p) => {
     const key = p.produto_nome;
-    if (!acc[key]) { acc[key] = { produto_nome: p.produto_nome, produto_id: p.produto_id, total_produzido: 0, total_vendido: p.qtd_vendida, total_sobra: 0, lotes: [] }; }
-    acc[key].total_produzido += p.qtd_produzida; acc[key].total_sobra = acc[key].total_produzido - acc[key].total_vendido; acc[key].lotes.push(p);
+    if (!acc[key]) {
+      acc[key] = {
+        produto_nome: p.produto_nome,
+        produto_id: p.produto_id,
+        total_produzido: 0,
+        total_vendido: p.qtd_vendida,
+        total_vendido_limitado: 0,
+        total_sobra: 0,
+        lotes: [],
+      };
+    }
+    acc[key].total_produzido += p.qtd_produzida;
+    acc[key].total_vendido_limitado = Math.min(acc[key].total_vendido, acc[key].total_produzido);
+    acc[key].total_sobra = Math.max(0, acc[key].total_produzido - acc[key].total_vendido_limitado);
+    acc[key].lotes.push(p);
     return acc;
   }, {} as any);
 
@@ -456,12 +481,33 @@ export default function ProducaoPage() {
           </div>
         </div>
         {/* Card Vendido */}
-        <div className="glass-card p-6 border border-white/5">
+        <div
+          className={`glass-card group p-6 border transition-all ${
+            temExcessoVendido
+              ? "border-luxury-orange/20 hover:border-luxury-orange/50 hover:bg-luxury-orange"
+              : "border-white/5"
+          }`}
+          title={temExcessoVendido ? `Real vendido / produzido: ${totalVendido} / ${totalProduzido}` : undefined}
+        >
           <div className="flex items-center gap-4">
-            <div className="w-12 h-12 rounded-xl bg-green-500/10 flex items-center justify-center"><TrendingUp className="text-green-500" size={24} /></div>
+            <div className={`w-12 h-12 rounded-xl flex items-center justify-center transition-colors ${
+              temExcessoVendido ? "bg-green-500/10 group-hover:bg-black/10" : "bg-green-500/10"
+            }`}>
+              <TrendingUp className={`transition-colors ${temExcessoVendido ? "text-green-500 group-hover:text-black" : "text-green-500"}`} size={24} />
+            </div>
             <div>
-              <p className="text-[10px] uppercase tracking-[0.2em] font-black text-white/40 mb-1">Vendido / Produzido</p>
-              <p className="text-3xl font-black italic tracking-tighter text-green-500">{totalVendido} / {totalProduzido}</p>
+              <p className={`mb-1 text-[10px] font-black uppercase tracking-[0.2em] transition-colors ${
+                temExcessoVendido ? "text-white/40 group-hover:text-black/70" : "text-white/40"
+              }`}>
+                <span className={temExcessoVendido ? "group-hover:hidden" : ""}>Vendido / Produzido</span>
+                {temExcessoVendido && <span className="hidden text-[9px] tracking-[0.12em] group-hover:inline">Real Vendido / Produzido</span>}
+              </p>
+              <p className={`text-3xl font-black italic tracking-tighter transition-colors ${
+                temExcessoVendido ? "text-green-500 group-hover:text-black" : "text-green-500"
+              }`}>
+                <span className={temExcessoVendido ? "group-hover:hidden" : ""}>{totalVendidoLimitado} / {totalProduzido}</span>
+                {temExcessoVendido && <span className="hidden group-hover:inline">{totalVendido} / {totalProduzido}</span>}
+              </p>
             </div>
           </div>
         </div>
@@ -502,7 +548,7 @@ export default function ProducaoPage() {
                         }, 0);
                       });
                     }
-                    else if (e.key === 'F1' && group.lotes.length > 0) { e.preventDefault(); openActionPopup(group.lotes[0], group.total_vendido, group.lotes); }
+                    else if (e.key === 'F1' && group.lotes.length > 0) { e.preventDefault(); openActionPopup(group.lotes[0], group.total_vendido_limitado, group.lotes); }
                     else if (e.key === 'ArrowUp') { e.preventDefault(); const p = e.currentTarget.previousElementSibling as HTMLElement; if (p) p.focus(); else document.getElementById('btn-registrar')?.focus(); }
                     else if (e.key === 'ArrowDown') { e.preventDefault(); (e.currentTarget.nextElementSibling as HTMLElement)?.focus(); }
                   }}
@@ -513,9 +559,60 @@ export default function ProducaoPage() {
                     </div>
                     <p className="font-black text-xl italic uppercase tracking-tighter">{group.produto_nome}</p>
                   </td>
-                  <td className="px-6 py-5 text-center"><span className="bg-white/5 px-4 py-2 rounded-lg font-black text-xl">{group.total_produzido}</span></td>
-                  <td className="px-6 py-5 text-center"><span className="text-green-500 font-black text-xl">{group.total_vendido}</span></td>
-                  <td className="px-6 py-5 text-center"><span className={cn("px-4 py-2 rounded-lg font-black text-xl", group.total_sobra > 0 ? "text-red-500 bg-red-500/5" : "text-white/20")}>{group.total_sobra}</span></td>
+                  <td
+                    className="px-6 py-5 text-center"
+                    title={group.total_vendido > group.total_produzido ? `Produzido: ${group.total_produzido} • Real vendido: ${group.total_vendido} • Sobra: 0` : undefined}
+                  >
+                    <span
+                      className={cn(
+                        "px-4 py-2 rounded-lg font-black text-xl transition-all",
+                        group.total_vendido > group.total_produzido
+                          ? "bg-white/5 group-hover:bg-luxury-orange group-hover:text-black"
+                          : "bg-white/5"
+                      )}
+                    >
+                      {group.total_produzido}
+                    </span>
+                  </td>
+                  <td
+                    className="px-6 py-5 text-center"
+                    title={group.total_vendido > group.total_produzido ? `Produzido: ${group.total_produzido} • Real vendido: ${group.total_vendido} • Sobra: 0` : undefined}
+                  >
+                    <span
+                      className={cn(
+                        "px-4 py-2 rounded-lg font-black text-xl transition-all",
+                        group.total_vendido > group.total_produzido
+                          ? "text-green-500 group-hover:bg-luxury-orange group-hover:text-black"
+                          : "text-green-500"
+                      )}
+                    >
+                      <span className={group.total_vendido > group.total_produzido ? "group-hover:hidden" : ""}>
+                        {group.total_vendido_limitado}
+                      </span>
+                      {group.total_vendido > group.total_produzido && (
+                        <span className="hidden group-hover:inline">
+                          {group.total_vendido}
+                        </span>
+                      )}
+                    </span>
+                  </td>
+                  <td
+                    className="px-6 py-5 text-center"
+                    title={group.total_vendido > group.total_produzido ? `Produzido: ${group.total_produzido} • Real vendido: ${group.total_vendido} • Sobra: 0` : undefined}
+                  >
+                    <span
+                      className={cn(
+                        "px-4 py-2 rounded-lg font-black text-xl transition-all",
+                        group.total_vendido > group.total_produzido
+                          ? "text-white/20 group-hover:bg-luxury-orange group-hover:text-black"
+                          : group.total_sobra > 0
+                            ? "text-red-500 bg-red-500/5"
+                            : "text-white/20"
+                      )}
+                    >
+                      {Math.max(0, group.total_sobra)}
+                    </span>
+                  </td>
                   <td className="px-6 py-5 text-right pr-10 uppercase text-[10px] font-black text-white/20 tracking-widest">Resumo do Dia</td>
                 </tr>
                 {expandedGroups[group.produto_nome] && group.lotes.map((lote: any) => (
@@ -524,7 +621,7 @@ export default function ProducaoPage() {
                       if (e.target !== e.currentTarget) return;
                       if (e.key === 'ArrowUp') { e.preventDefault(); (e.currentTarget.previousElementSibling as HTMLElement)?.focus(); }
                       else if (e.key === 'ArrowDown') { e.preventDefault(); (e.currentTarget.nextElementSibling as HTMLElement)?.focus(); }
-                      else if (e.key === 'F1') { e.preventDefault(); openActionPopup(lote, group.total_vendido, group.lotes); }
+                      else if (e.key === 'F1') { e.preventDefault(); openActionPopup(lote, group.total_vendido_limitado, group.lotes); }
                       else if (e.key === 'Enter') { e.preventDefault(); document.getElementById(`btn-edit-${lote.id}`)?.focus(); }
                     }}
                     className="bg-black/40 border-b border-white/[0.02] group/child outline-none focus-within:bg-luxury-orange/10">

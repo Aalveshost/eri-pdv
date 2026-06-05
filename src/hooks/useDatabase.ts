@@ -63,8 +63,19 @@ CREATE TABLE IF NOT EXISTS venda_itens (
     FOREIGN KEY (lote_id) REFERENCES lotes(id)
 );
 
+CREATE TABLE IF NOT EXISTS venda_pagamentos (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    venda_id INTEGER NOT NULL,
+    metodo TEXT NOT NULL,
+    valor REAL NOT NULL,
+    ordem INTEGER NOT NULL DEFAULT 0,
+    FOREIGN KEY (venda_id) REFERENCES vendas(id)
+);
+
 CREATE INDEX IF NOT EXISTS idx_lotes_validade ON lotes(produto_id, data_validade ASC) WHERE status = 'ativo' AND qtd_atual > 0;
 CREATE INDEX IF NOT EXISTS idx_produtos_barras ON produtos(codigo_barras);
+CREATE INDEX IF NOT EXISTS idx_venda_pagamentos_venda ON venda_pagamentos(venda_id, ordem);
+CREATE INDEX IF NOT EXISTS idx_venda_pagamentos_metodo ON venda_pagamentos(metodo);
 
 CREATE TABLE IF NOT EXISTS clientes (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -162,6 +173,10 @@ export function useDatabase() {
             "ALTER TABLE configuracoes ADD COLUMN impressao_corte INTEGER DEFAULT 0",
             "ALTER TABLE configuracoes ADD COLUMN impressao_largura_mm INTEGER DEFAULT 58",
             "ALTER TABLE venda_itens ADD COLUMN preco_custo REAL DEFAULT 0",
+            "CREATE TABLE IF NOT EXISTS venda_pagamentos (id INTEGER PRIMARY KEY AUTOINCREMENT, venda_id INTEGER NOT NULL, metodo TEXT NOT NULL, valor REAL NOT NULL, ordem INTEGER NOT NULL DEFAULT 0, FOREIGN KEY (venda_id) REFERENCES vendas(id))",
+            "CREATE INDEX IF NOT EXISTS idx_venda_pagamentos_venda ON venda_pagamentos(venda_id, ordem)",
+            "CREATE INDEX IF NOT EXISTS idx_venda_pagamentos_metodo ON venda_pagamentos(metodo)",
+            "INSERT INTO venda_pagamentos (venda_id, metodo, valor, ordem) SELECT v.id, CASE WHEN LOWER(v.metodo_pagamento) = 'cartao' THEN 'credito' ELSE LOWER(v.metodo_pagamento) END, v.total_venda, 0 FROM vendas v WHERE NOT EXISTS (SELECT 1 FROM venda_pagamentos vp WHERE vp.venda_id = v.id)",
             // Surgery to make lote_id nullable in existing databases
             "CREATE TABLE IF NOT EXISTS venda_itens_new (id INTEGER PRIMARY KEY AUTOINCREMENT, venda_id INTEGER NOT NULL, produto_id INTEGER NOT NULL, lote_id INTEGER, quantidade INTEGER NOT NULL, preco_unitario REAL NOT NULL, preco_custo REAL NOT NULL DEFAULT 0, FOREIGN KEY (venda_id) REFERENCES vendas(id), FOREIGN KEY (produto_id) REFERENCES produtos(id), FOREIGN KEY (lote_id) REFERENCES lotes(id))",
             "INSERT OR IGNORE INTO venda_itens_new (id, venda_id, produto_id, lote_id, quantidade, preco_unitario, preco_custo) SELECT id, venda_id, produto_id, lote_id, quantidade, preco_unitario, preco_custo FROM venda_itens",

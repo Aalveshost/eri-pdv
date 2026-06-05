@@ -6,6 +6,12 @@ interface ItemVendaInput {
   precoUnitario: number;
 }
 
+interface VendaPagamentoInput {
+  method: string;
+  amount: number;
+  order: number;
+}
+
 /**
  * Processa a venda dando baixa nos lotes de produção.
  * Prioriza lotes produzidos na mesma data da venda (dataReferencia).
@@ -15,7 +21,8 @@ export async function processarVendaFIFO(
   items: ItemVendaInput[], 
   metodoPagamento: string, 
   totalVenda: number,
-  dataReferencia?: string // Formato YYYY-MM-DD
+  dataReferencia?: string, // Formato YYYY-MM-DD
+  pagamentos: VendaPagamentoInput[] = []
 ) {
   try {
     const resVenda = await db.execute(
@@ -23,6 +30,17 @@ export async function processarVendaFIFO(
       [totalVenda, metodoPagamento, dataReferencia || new Date().toISOString()]
     );
     const vendaId = resVenda.lastInsertId;
+
+    const pagamentosNormalizados = pagamentos.length > 0
+      ? pagamentos
+      : [{ method: metodoPagamento, amount: totalVenda, order: 0 }];
+
+    for (const pagamento of pagamentosNormalizados) {
+      await db.execute(
+        "INSERT INTO venda_pagamentos (venda_id, metodo, valor, ordem) VALUES ($1, $2, $3, $4)",
+        [vendaId, pagamento.method, pagamento.amount, pagamento.order],
+      );
+    }
 
     for (const item of itemVendaInputToArray(items)) {
       // 2. Buscar lotes de produção ativos para este produto
