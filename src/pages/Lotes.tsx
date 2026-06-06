@@ -9,6 +9,7 @@ import {
   getProducaoEditMinimumQuantity,
   getProducaoNextFocusKey,
   getProducaoMinimumQuantityMessage,
+  getProducaoSummary,
 } from "./producaoActions";
 
 let producaoShouldFocusOnMount = false;
@@ -398,31 +399,14 @@ export default function ProducaoPage() {
 
   const deleteItem = async (id: number) => { if (!db) return; await db.execute("DELETE FROM lotes WHERE id = $1", [id]); setItemToDelete(null); loadData(); };
 
-  const totalProduzido = producoes.reduce((acc, p) => acc + p.qtd_produzida, 0);
-  const totalVendido = producoes.reduce((acc, p) => acc + p.qtd_vendida, 0);
-  const totalSobras = producoes.reduce((acc, p) => acc + Math.max(0, p.sobra), 0);
-  const totalVendidoLimitado = Math.min(totalVendido, totalProduzido);
-  const temExcessoVendido = totalVendido > totalProduzido;
-
-  const groupedProducoes = producoes.reduce((acc, p) => {
-    const key = p.produto_nome;
-    if (!acc[key]) {
-      acc[key] = {
-        produto_nome: p.produto_nome,
-        produto_id: p.produto_id,
-        total_produzido: 0,
-        total_vendido: p.qtd_vendida,
-        total_vendido_limitado: 0,
-        total_sobra: 0,
-        lotes: [],
-      };
-    }
-    acc[key].total_produzido += p.qtd_produzida;
-    acc[key].total_vendido_limitado = Math.min(acc[key].total_vendido, acc[key].total_produzido);
-    acc[key].total_sobra = Math.max(0, acc[key].total_produzido - acc[key].total_vendido_limitado);
-    acc[key].lotes.push(p);
-    return acc;
-  }, {} as any);
+  const {
+    totalProduzido,
+    totalVendido,
+    totalSobras,
+    totalVendidoLimitado,
+    temExcessoVendido,
+    groupedProducoes,
+  } = getProducaoSummary(producoes);
 
   const openActionPopup = (lote: Producao, totalVendidoDia: number, lotesDoProduto: Producao[]) => {
     captureCurrentFocusKey();
