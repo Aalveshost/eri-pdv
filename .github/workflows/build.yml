@@ -53,6 +53,4 @@ jobs:
           releaseBody: "Build automático gerado pelo GitHub Actions."
           releaseDraft: true
           prerelease: false
-          uploadWorkflowArtifacts: true
-          workflowArtifactNamePattern: "[platform]-[arch]-[bundle]"
           args: ${{ matrix.args }}
