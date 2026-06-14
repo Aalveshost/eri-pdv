@@ -276,7 +276,7 @@ async fn imprimir_padrao_direto(
     let path = dir.join(safe_name);
     let copies = copias.unwrap_or(1).max(1);
     let should_cut = cortar.unwrap_or(false);
-    let paper_width_mm = largura_mm.unwrap_or(48).max(1);
+    let _paper_width_mm = largura_mm.unwrap_or(48).max(1);
 
     let mut file = fs::OpenOptions::new()
         .create(true)
@@ -310,56 +310,14 @@ async fn imprimir_padrao_direto(
 
     #[cfg(target_os = "windows")]
     {
-        let html_path = dir.join("impressao_eri_windows.html");
-        let html = format!(
-            r#"<!DOCTYPE html>
-<html>
-  <head>
-    <meta charset="UTF-8" />
-    <style>
-      @page {{
-        size: {0}mm auto;
-        margin: 0;
-      }}
-      html, body {{
-        margin: 0;
-        padding: 0;
-        width: {0}mm;
-        background: #fff;
-        color: #111;
-        font-family: "Courier New", monospace;
-        font-size: 11px;
-        line-height: 1.2;
-      }}
-      body {{
-        padding: 0.5mm 1.5mm;
-      }}
-      pre {{
-        margin: 0;
-        white-space: pre-wrap;
-        word-break: break-word;
-      }}
-    </style>
-  </head>
-  <body><pre>{1}</pre></body>
-</html>"#,
-            paper_width_mm,
-            escape_html(&conteudo)
-        );
+        let raw_path = dir.join("impressao_eri_windows.bin");
+        let payload = build_windows_receipt_payload(&conteudo, should_cut);
+        fs::write(&raw_path, payload)
+            .map_err(|e| format!("Erro ao criar payload de impressão: {}", e))?;
 
-        fs::write(&html_path, html)
-            .map_err(|e| format!("Erro ao criar HTML temporário: {}", e))?;
-
-        let path_str = html_path.to_string_lossy().to_string();
         for _ in 0..copies {
-            let status = std::process::Command::new("cmd")
-                .args(["/C", "rundll32.exe", "mshtml.dll,PrintHTML", &path_str])
-                .status()
-                .map_err(|e| format!("Erro ao enviar para impressora: {}", e))?;
-
-            if !status.success() {
-                return Err("Falha ao imprimir na impressora padrao.".to_string());
-            }
+            imprimir_raw_windows(&raw_path)
+                .map_err(|e| format!("Erro ao enviar para a impressora padrão: {}", e))?;
         }
 
         return Ok(());
@@ -371,11 +329,114 @@ async fn imprimir_padrao_direto(
     }
 }
 
-fn escape_html(input: &str) -> String {
-    input
-        .replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
+#[cfg(any(target_os = "windows", test))]
+fn build_windows_receipt_payload(conteudo: &str, should_cut: bool) -> Vec<u8> {
+    let normalized = conteudo.replace("\r\n", "\n").replace('\r', "\n");
+    let mut payload = normalized.replace('\n', "\r\n").into_bytes();
+
+    if !payload.ends_with(b"\r\n") {
+        payload.extend_from_slice(b"\r\n");
+    }
+
+    if should_cut {
+        // ESC @ (init) + GS V 0 (full cut)
+        payload.extend_from_slice(&[0x1B, 0x40, 0x1D, 0x56, 0x00]);
+    }
+
+    payload
+}
+
+#[cfg(target_os = "windows")]
+fn imprimir_raw_windows(path: &std::path::Path) -> Result<(), String> {
+    let raw_path = path.to_string_lossy().replace('\\', "\\\\").replace('\'', "''");
+    let script = format!(
+        r#"$printer = Get-CimInstance Win32_Printer | Where-Object {{ $_.Default -eq $true }} | Select-Object -First 1;
+if (-not $printer) {{ throw 'Nenhuma impressora padrão configurada.' }}
+
+$source = @"
+using System;
+using System.IO;
+using System.Runtime.InteropServices;
+
+public static class RawPrinterHelper {{
+  [StructLayout(LayoutKind.Sequential, CharSet=CharSet.Unicode)]
+  public class DOCINFO {{
+    [MarshalAs(UnmanagedType.LPWStr)] public string pDocName;
+    [MarshalAs(UnmanagedType.LPWStr)] public string pOutputFile;
+    [MarshalAs(UnmanagedType.LPWStr)] public string pDataType;
+  }}
+
+  [DllImport("winspool.Drv", EntryPoint="OpenPrinterW", CharSet=CharSet.Unicode, SetLastError=true)]
+  static extern bool OpenPrinter(string szPrinter, out IntPtr hPrinter, IntPtr pd);
+
+  [DllImport("winspool.Drv", SetLastError=true)]
+  static extern bool ClosePrinter(IntPtr hPrinter);
+
+  [DllImport("winspool.Drv", CharSet=CharSet.Unicode, SetLastError=true)]
+  static extern bool StartDocPrinter(IntPtr hPrinter, int level, DOCINFO di);
+
+  [DllImport("winspool.Drv", SetLastError=true)]
+  static extern bool EndDocPrinter(IntPtr hPrinter);
+
+  [DllImport("winspool.Drv", SetLastError=true)]
+  static extern bool StartPagePrinter(IntPtr hPrinter);
+
+  [DllImport("winspool.Drv", SetLastError=true)]
+  static extern bool EndPagePrinter(IntPtr hPrinter);
+
+  [DllImport("winspool.Drv", SetLastError=true)]
+  static extern bool WritePrinter(IntPtr hPrinter, byte[] bytes, int count, out int written);
+
+  public static void SendFile(string printerName, string filePath) {{
+    var bytes = File.ReadAllBytes(filePath);
+    IntPtr hPrinter;
+    if (!OpenPrinter(printerName, out hPrinter, IntPtr.Zero))
+      throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
+
+    try {{
+      var doc = new DOCINFO {{ pDocName = "ERI Cupom", pDataType = "RAW" }};
+      if (!StartDocPrinter(hPrinter, 1, doc))
+        throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
+      try {{
+        if (!StartPagePrinter(hPrinter))
+          throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
+        try {{
+          int written;
+          if (!WritePrinter(hPrinter, bytes, bytes.Length, out written) || written != bytes.Length)
+            throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
+        }} finally {{
+          EndPagePrinter(hPrinter);
+        }}
+      }} finally {{
+        EndDocPrinter(hPrinter);
+      }}
+    }} finally {{
+      ClosePrinter(hPrinter);
+    }}
+  }}
+}}
+"@;
+
+Add-Type -TypeDefinition $source;
+[RawPrinterHelper]::SendFile($printer.Name, '{0}');"#,
+        raw_path
+    );
+
+    let output = std::process::Command::new("powershell")
+        .args(["-NoProfile", "-NonInteractive", "-Command", &script])
+        .output()
+        .map_err(|e| e.to_string())?;
+
+    if output.status.success() {
+        return Ok(());
+    }
+
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    if stderr.is_empty() {
+        return Err("Falha ao imprimir na impressora padrão.".to_string());
+    }
+
+    Err(stderr)
 }
 
 #[cfg(target_os = "macos")]
@@ -456,4 +517,21 @@ pub fn run() {
         })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::build_windows_receipt_payload;
+
+    #[test]
+    fn windows_payload_normalizes_line_endings() {
+        let payload = build_windows_receipt_payload("Linha 1\nLinha 2", false);
+        assert_eq!(payload, b"Linha 1\r\nLinha 2\r\n");
+    }
+
+    #[test]
+    fn windows_payload_appends_cut_sequence_when_enabled() {
+        let payload = build_windows_receipt_payload("Linha unica", true);
+        assert!(payload.ends_with(&[0x1B, 0x40, 0x1D, 0x56, 0x00]));
+    }
 }
