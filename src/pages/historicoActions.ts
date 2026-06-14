@@ -1,3 +1,5 @@
+import { getReceiptLineWidthChars } from "./receiptPaperWidth";
+
 export type HistoricoAction = "imprimir" | "excluir";
 export type HistoricoActionTargetKind = "todas" | "prazo";
 
@@ -100,16 +102,13 @@ export function buildHistoricoPrintHtml(payload: HistoricoPrintPayload) {
 }
 
 export function buildHistoricoPrintText(payload: HistoricoPrintPayload, paperWidth: HistoricoPaperWidth = 58) {
-  const sep = "-".repeat(paperWidth === 80 ? 48 : 32);
+  const lineWidth = getReceiptLineWidthChars(paperWidth);
+  const sep = "-".repeat(lineWidth);
   const paymentDetails = payload.paymentDetails && payload.paymentDetails.length > 0
-    ? ["Pagamentos:", ...payload.paymentDetails].join("\n")
+    ? ["Pagamento:", ...payload.paymentDetails].join("\n")
     : null;
   const itens = payload.itens.length > 0
-    ? payload.itens.map((item) => {
-        const unit = formatMoney(item.valorUnitario ?? item.valorTotal);
-        const total = formatMoney(item.valorTotal);
-        return `${item.quantidade}x ${item.descricao}\n  Unit.: R$ ${unit} | Total: R$ ${total}`;
-      }).join("\n")
+    ? payload.itens.map((item) => formatPrintItem(item, paperWidth, lineWidth)).join("\n")
     : "Nenhum item encontrado";
 
   return [
@@ -117,12 +116,78 @@ export function buildHistoricoPrintText(payload: HistoricoPrintPayload, paperWid
     payload.subtitulo,
     `Data: ${payload.dataVenda}`,
     sep,
-    paymentDetails,
-    paymentDetails ? sep : null,
     itens,
     sep,
+    paymentDetails,
+    paymentDetails ? sep : null,
     `Total: R$ ${formatMoney(payload.total)}`,
   ].filter(Boolean).join("\n");
+}
+
+function formatPrintItem(
+  item: HistoricoPrintItem,
+  paperWidth: HistoricoPaperWidth,
+  lineWidth: number,
+) {
+  if (paperWidth === 80) {
+    const unit = formatMoney(item.valorUnitario ?? item.valorTotal);
+    const total = formatMoney(item.valorTotal);
+    const gap = "   ";
+    const priceWidth = 7;
+    const itemWidth = Math.max(1, lineWidth - (priceWidth * 2) - (gap.length * 2));
+    const description = truncateText(`${item.quantidade}x ${item.descricao}`, itemWidth);
+    return `${description.padEnd(itemWidth)}${gap}${unit.padStart(priceWidth)}${gap}${total.padStart(priceWidth)}`;
+  }
+
+  const unit = `Unit.: R$ ${formatMoney(item.valorUnitario ?? item.valorTotal)}`;
+  const total = `Total: R$ ${formatMoney(item.valorTotal)}`;
+  const descriptionLines = wrapText(`${item.quantidade}x ${item.descricao}`, lineWidth);
+  return `${descriptionLines.join("\n")}\n  ${unit} | ${total}`;
+}
+
+function truncateText(text: string, maxWidth: number) {
+  if (text.length <= maxWidth) return text;
+  if (maxWidth <= 3) return text.slice(0, maxWidth);
+  return `${text.slice(0, maxWidth - 3).trimEnd()}...`;
+}
+
+function wrapText(text: string, lineWidth: number) {
+  const words = text.trim().split(/\s+/).filter(Boolean);
+  if (words.length === 0) return [""];
+
+  const lines: string[] = [];
+  let currentLine = "";
+
+  for (const word of words) {
+    const candidate = currentLine ? `${currentLine} ${word}` : word;
+    if (candidate.length <= lineWidth) {
+      currentLine = candidate;
+      continue;
+    }
+
+    if (currentLine) {
+      lines.push(currentLine);
+      currentLine = "";
+    }
+
+    if (word.length <= lineWidth) {
+      currentLine = word;
+      continue;
+    }
+
+    let remaining = word;
+    while (remaining.length > lineWidth) {
+      lines.push(remaining.slice(0, lineWidth));
+      remaining = remaining.slice(lineWidth);
+    }
+    currentLine = remaining;
+  }
+
+  if (currentLine) {
+    lines.push(currentLine);
+  }
+
+  return lines;
 }
 
 function formatMoney(value: number) {

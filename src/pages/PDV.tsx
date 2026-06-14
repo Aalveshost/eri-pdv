@@ -33,6 +33,7 @@ import {
   type PaymentMethod,
   type SalePaymentRow,
 } from "./pdvPayments";
+import { getReceiptPrintableWidthMm } from "./receiptPaperWidth";
 
 // Module-level flag: set by Layout when user presses Enter on PDV sidebar link
 // Checked on mount to decide whether to auto-focus the date input
@@ -380,7 +381,7 @@ export default function PDV() {
     const paymentDetails = paymentEntries.length > 1 ? buildPaymentDetailLines(paymentEntries) : undefined;
     return buildHistoricoPrintText({
       titulo: config.nomeLoja,
-      subtitulo: `Venda #${sale.id} - ${getSalePaymentLabel(sale)}`,
+      subtitulo: `Venda #${sale.id}`,
       dataVenda: formatSaleDateTime(sale.data_venda),
       total: sale.total_venda,
       itens,
@@ -400,6 +401,7 @@ export default function PDV() {
       conteudo: buildSalePrintContent(sale, itens, config, pagamentos),
       copias: copies,
       cortar: config.cutPaperEnabled,
+      larguraMm: getReceiptPrintableWidthMm(config.paperWidth),
     });
   };
 

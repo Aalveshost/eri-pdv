@@ -6,7 +6,12 @@ a {
   text-decoration: none;
 }
 
-html, body, #root {
+html {
+  font-size: clamp(14px, calc(11px + 0.16vw + 0.16vh), 16px);
+}
+
+body,
+#root {
   width: 100vw;
   height: 100vh;
   margin: 0;
@@ -59,6 +64,27 @@ input[type=number] {
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  --app-space-scale: clamp(0.92, calc(0.88 + 0.0005 * 100vw), 1);
+}
+
+@media (max-width: 1366px), (max-height: 768px) {
+  html {
+    font-size: clamp(13px, calc(10.8px + 0.14vw + 0.12vh), 15px);
+  }
+
+  :root {
+    --app-space-scale: 0.94;
+  }
+}
+
+@media (max-width: 1180px), (max-height: 700px) {
+  html {
+    font-size: clamp(12.5px, calc(10.4px + 0.12vw + 0.1vh), 14px);
+  }
+
+  :root {
+    --app-space-scale: 0.9;
+  }
 }
 
 @theme {

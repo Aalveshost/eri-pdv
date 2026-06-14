@@ -267,6 +267,7 @@ async fn imprimir_padrao_direto(
     conteudo: String,
     copias: Option<u32>,
     cortar: Option<bool>,
+    largura_mm: Option<u32>,
 ) -> Result<(), String> {
     use std::io::Write;
 
@@ -275,6 +276,7 @@ async fn imprimir_padrao_direto(
     let path = dir.join(safe_name);
     let copies = copias.unwrap_or(1).max(1);
     let should_cut = cortar.unwrap_or(false);
+    let paper_width_mm = largura_mm.unwrap_or(48).max(1);
 
     let mut file = fs::OpenOptions::new()
         .create(true)
@@ -308,10 +310,50 @@ async fn imprimir_padrao_direto(
 
     #[cfg(target_os = "windows")]
     {
-        let path_str = path.to_string_lossy().to_string();
+        let html_path = dir.join("impressao_eri_windows.html");
+        let html = format!(
+            r#"<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <style>
+      @page {{
+        size: {0}mm auto;
+        margin: 0;
+      }}
+      html, body {{
+        margin: 0;
+        padding: 0;
+        width: {0}mm;
+        background: #fff;
+        color: #111;
+        font-family: "Courier New", monospace;
+        font-size: 11px;
+        line-height: 1.2;
+      }}
+      body {{
+        padding: 0.5mm 1.5mm;
+      }}
+      pre {{
+        margin: 0;
+        white-space: pre-wrap;
+        word-break: break-word;
+      }}
+    </style>
+  </head>
+  <body><pre>{1}</pre></body>
+</html>"#,
+            paper_width_mm,
+            escape_html(&conteudo)
+        );
+
+        fs::write(&html_path, html)
+            .map_err(|e| format!("Erro ao criar HTML temporário: {}", e))?;
+
+        let path_str = html_path.to_string_lossy().to_string();
         for _ in 0..copies {
-            let status = std::process::Command::new("notepad.exe")
-                .args(["/p", &path_str])
+            let status = std::process::Command::new("cmd")
+                .args(["/C", "rundll32.exe", "mshtml.dll,PrintHTML", &path_str])
                 .status()
                 .map_err(|e| format!("Erro ao enviar para impressora: {}", e))?;
 
@@ -327,6 +369,13 @@ async fn imprimir_padrao_direto(
     {
         Err("Impressão direta não suportada neste sistema.".to_string())
     }
+}
+
+fn escape_html(input: &str) -> String {
+    input
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
 }
 
 #[cfg(target_os = "macos")]

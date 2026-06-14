@@ -1,0 +1,11 @@
+node_modules
+dist
+src-tauri
+.git
+.codex
+script
+.DS_Store
+backup_sistema_eri.zip
+tsc_errors.txt
+.env*
+!.env.example

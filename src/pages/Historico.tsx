@@ -7,6 +7,7 @@ import { formatCurrency } from "../utils/currency";
 import { buildHistoricoPrintText, getHistoricoActionMeta, getHistoricoActions, getHistoricoDeleteConfirmText, getNextHistoricoAction } from "./historicoActions";
 import { buildHistoricoDeletePlan } from "./historicoDeleteFlow";
 import { buildPaymentDetailLines, getPaymentMethodLabel, mapSalePaymentRows, type SalePaymentRow } from "./pdvPayments";
+import { getReceiptPrintableWidthMm } from "./receiptPaperWidth";
 
 interface Venda {
   id: number;
@@ -143,15 +144,13 @@ function DateInput({
     else if (posInDisplay <= 5) pos = posInDisplay - 1;
     else pos = posInDisplay - 2;
 
-    if (e.key === 'Escape' || e.key === 'Enter' || e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+    if (e.key === 'Escape' || e.key === 'Enter' || e.key === 'Tab' || e.key === 'ArrowDown' || e.key === 'ArrowUp') {
       externalKeyDown?.(e);
       return;
     }
 
     if (e.key === 'ArrowRight' && posInDisplay >= 10) { externalKeyDown?.(e); return; }
     if (e.key === 'ArrowLeft' && posInDisplay <= 0) { externalKeyDown?.(e); return; }
-
-    if (!inputActive) { externalKeyDown?.(e); return; }
 
     if (/^\d$/.test(e.key)) {
       e.preventDefault();
@@ -203,7 +202,6 @@ function DateInput({
         onChange={() => {}}
         onKeyDown={handleKeyDown}
         maxLength={10}
-        readOnly={!inputActive}
       />
     </div>
   );
@@ -248,7 +246,6 @@ export default function Historico() {
   const deleteActionRef = useRef<HTMLButtonElement>(null);
   const cancelDeleteRef = useRef<HTMLButtonElement>(null);
   const confirmDeleteRef = useRef<HTMLButtonElement>(null);
-
 
   const load = useCallback(async () => {
     if (!db) return;
@@ -316,6 +313,42 @@ export default function Historico() {
     });
     setPaymentTotals(nextTotals);
   }, [db, dataInicial, dataFinal]);
+
+  const handleDateFilterKeyDown = useCallback((e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "Tab") {
+      e.preventDefault();
+      e.stopPropagation();
+
+      const isInitialInput = e.currentTarget === iniRef.current;
+      const nextZone = isInitialInput ? "fim" : "ini";
+
+      setInputActive(true);
+      setNavZone(nextZone);
+
+      setTimeout(() => {
+        const target = isInitialInput ? fimRef.current : iniRef.current;
+        target?.focus();
+        target?.setSelectionRange(0, 0);
+      }, 0);
+      return;
+    }
+
+    if (e.key === "Enter") {
+      e.preventDefault();
+      e.stopPropagation();
+      setInputActive(false);
+      load();
+      return;
+    }
+
+    if (e.key === "Escape") {
+      e.preventDefault();
+      e.stopPropagation();
+      setInputActive(false);
+      iniRef.current?.blur();
+      fimRef.current?.blur();
+    }
+  }, [load]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -490,7 +523,7 @@ export default function Historico() {
           nome: `venda-${venda.id}.txt`,
           conteudo: buildHistoricoPrintText({
             titulo: `Venda #${venda.id}`,
-            subtitulo: `Pagamento em ${getPaymentMethodLabel(venda.metodo_pagamento.toLowerCase())}`,
+            subtitulo: "",
             dataVenda: isoToBr(venda.data_venda),
             total: venda.total_venda,
             itens: itens.map(item => ({
@@ -503,6 +536,7 @@ export default function Historico() {
           }, paperWidth),
           copias: 1,
           cortar: false,
+          larguraMm: getReceiptPrintableWidthMm(paperWidth),
         });
       } else {
         const venda = vendasPrazo.find(v => v.id === target.id);
@@ -524,6 +558,7 @@ export default function Historico() {
           }, paperWidth),
           copias: 1,
           cortar: false,
+          larguraMm: getReceiptPrintableWidthMm(paperWidth),
         });
       }
     } catch (err) {
@@ -920,6 +955,7 @@ export default function Historico() {
               highlighted={navZone === 'ini' && !inputActive}
               inputActive={navZone === 'ini' && inputActive}
               externalRef={iniRef}
+              onKeyDown={handleDateFilterKeyDown}
             />
           </div>
           <div className="w-40">
@@ -928,6 +964,7 @@ export default function Historico() {
               highlighted={navZone === 'fim' && !inputActive}
               inputActive={navZone === 'fim' && inputActive}
               externalRef={fimRef}
+              onKeyDown={handleDateFilterKeyDown}
             />
           </div>
         </div>
