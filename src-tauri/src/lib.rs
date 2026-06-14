@@ -3,11 +3,9 @@ use std::fs;
 use std::path::Path;
 use chrono::{Datelike, Timelike, Local};
 #[cfg(target_os = "windows")]
-use windows_sys::Win32::Foundation::HANDLE;
-#[cfg(target_os = "windows")]
 use windows_sys::Win32::Graphics::Printing::{
     ClosePrinter, DOC_INFO_1W, EndDocPrinter, EndPagePrinter, GetDefaultPrinterW, OpenPrinterW,
-    StartDocPrinterW, StartPagePrinter, WritePrinter,
+    PRINTER_HANDLE, StartDocPrinterW, StartPagePrinter, WritePrinter,
 };
 
 #[derive(Serialize, Deserialize)]
@@ -369,12 +367,14 @@ fn print_raw_bytes_windows(bytes: Vec<u8>) -> Result<(), String> {
     let printer_name_wide = to_wide(&printer_name);
     let doc_name = to_wide("ERI Salgados - Cupom");
     let raw_type = to_wide("RAW");
-    let mut printer_handle: HANDLE = std::ptr::null_mut();
+    let mut printer_handle = PRINTER_HANDLE {
+        Value: std::ptr::null_mut(),
+    };
 
     let open_ok = unsafe {
         OpenPrinterW(
             printer_name_wide.as_ptr(),
-            &mut printer_handle,
+            &mut printer_handle as *mut PRINTER_HANDLE,
             std::ptr::null_mut(),
         )
     };
