@@ -4574,7 +4574,7 @@ dependencies = [
 
 [[package]]
 name = "tauri-app"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "chrono",
  "env_logger",
@@ -4587,6 +4587,7 @@ dependencies = [
  "tauri-plugin-opener",
  "tauri-plugin-sql",
  "url",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

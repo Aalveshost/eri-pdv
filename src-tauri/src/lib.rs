@@ -2,6 +2,13 @@ use serde::{Serialize, Deserialize};
 use std::fs;
 use std::path::Path;
 use chrono::{Datelike, Timelike, Local};
+#[cfg(target_os = "windows")]
+use windows_sys::Win32::Foundation::HANDLE;
+#[cfg(target_os = "windows")]
+use windows_sys::Win32::Graphics::Printing::{
+    ClosePrinter, DOC_INFO_1W, EndDocPrinter, EndPagePrinter, GetDefaultPrinterW, OpenPrinterW,
+    StartDocPrinterW, StartPagePrinter, WritePrinter,
+};
 
 #[derive(Serialize, Deserialize)]
 pub struct BackupResult {
@@ -332,11 +339,15 @@ async fn imprimir_padrao_direto(
 #[cfg(any(target_os = "windows", test))]
 fn build_windows_receipt_payload(conteudo: &str, should_cut: bool) -> Vec<u8> {
     let normalized = conteudo.replace("\r\n", "\n").replace('\r', "\n");
-    let mut payload = normalized.replace('\n', "\r\n").into_bytes();
+    let mut payload = Vec::new();
+    payload.extend_from_slice(b"\r\n\r\n");
+    payload.extend_from_slice(normalized.replace('\n', "\r\n").as_bytes());
 
     if !payload.ends_with(b"\r\n") {
         payload.extend_from_slice(b"\r\n");
     }
+
+    payload.extend_from_slice(b"\r\n\r\n\r\n");
 
     if should_cut {
         // ESC @ (init) + GS V 0 (full cut)
@@ -348,95 +359,100 @@ fn build_windows_receipt_payload(conteudo: &str, should_cut: bool) -> Vec<u8> {
 
 #[cfg(target_os = "windows")]
 fn imprimir_raw_windows(path: &std::path::Path) -> Result<(), String> {
-    let raw_path = path.to_string_lossy().replace('\\', "\\\\").replace('\'', "''");
-    let script = format!(
-        r#"$printer = Get-CimInstance Win32_Printer | Where-Object {{ $_.Default -eq $true }} | Select-Object -First 1;
-if (-not $printer) {{ throw 'Nenhuma impressora padrão configurada.' }}
+    let bytes = fs::read(path).map_err(|e| format!("Erro ao ler payload de impressão: {e}"))?;
+    print_raw_bytes_windows(bytes)
+}
 
-$source = @"
-using System;
-using System.IO;
-using System.Runtime.InteropServices;
+#[cfg(target_os = "windows")]
+fn print_raw_bytes_windows(bytes: Vec<u8>) -> Result<(), String> {
+    let printer_name = get_default_printer_windows()?;
+    let printer_name_wide = to_wide(&printer_name);
+    let doc_name = to_wide("ERI Salgados - Cupom");
+    let raw_type = to_wide("RAW");
+    let mut printer_handle: HANDLE = std::ptr::null_mut();
 
-public static class RawPrinterHelper {{
-  [StructLayout(LayoutKind.Sequential, CharSet=CharSet.Unicode)]
-  public class DOCINFO {{
-    [MarshalAs(UnmanagedType.LPWStr)] public string pDocName;
-    [MarshalAs(UnmanagedType.LPWStr)] public string pOutputFile;
-    [MarshalAs(UnmanagedType.LPWStr)] public string pDataType;
-  }}
-
-  [DllImport("winspool.Drv", EntryPoint="OpenPrinterW", CharSet=CharSet.Unicode, SetLastError=true)]
-  static extern bool OpenPrinter(string szPrinter, out IntPtr hPrinter, IntPtr pd);
-
-  [DllImport("winspool.Drv", SetLastError=true)]
-  static extern bool ClosePrinter(IntPtr hPrinter);
-
-  [DllImport("winspool.Drv", CharSet=CharSet.Unicode, SetLastError=true)]
-  static extern bool StartDocPrinter(IntPtr hPrinter, int level, DOCINFO di);
-
-  [DllImport("winspool.Drv", SetLastError=true)]
-  static extern bool EndDocPrinter(IntPtr hPrinter);
-
-  [DllImport("winspool.Drv", SetLastError=true)]
-  static extern bool StartPagePrinter(IntPtr hPrinter);
-
-  [DllImport("winspool.Drv", SetLastError=true)]
-  static extern bool EndPagePrinter(IntPtr hPrinter);
-
-  [DllImport("winspool.Drv", SetLastError=true)]
-  static extern bool WritePrinter(IntPtr hPrinter, byte[] bytes, int count, out int written);
-
-  public static void SendFile(string printerName, string filePath) {{
-    var bytes = File.ReadAllBytes(filePath);
-    IntPtr hPrinter;
-    if (!OpenPrinter(printerName, out hPrinter, IntPtr.Zero))
-      throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
-
-    try {{
-      var doc = new DOCINFO {{ pDocName = "ERI Cupom", pDataType = "RAW" }};
-      if (!StartDocPrinter(hPrinter, 1, doc))
-        throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
-      try {{
-        if (!StartPagePrinter(hPrinter))
-          throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
-        try {{
-          int written;
-          if (!WritePrinter(hPrinter, bytes, bytes.Length, out written) || written != bytes.Length)
-            throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
-        }} finally {{
-          EndPagePrinter(hPrinter);
-        }}
-      }} finally {{
-        EndDocPrinter(hPrinter);
-      }}
-    }} finally {{
-      ClosePrinter(hPrinter);
-    }}
-  }}
-}}
-"@;
-
-Add-Type -TypeDefinition $source;
-[RawPrinterHelper]::SendFile($printer.Name, '{0}');"#,
-        raw_path
-    );
-
-    let output = std::process::Command::new("powershell")
-        .args(["-NoProfile", "-NonInteractive", "-Command", &script])
-        .output()
-        .map_err(|e| e.to_string())?;
-
-    if output.status.success() {
-        return Ok(());
+    let open_ok = unsafe {
+        OpenPrinterW(
+            printer_name_wide.as_ptr(),
+            &mut printer_handle,
+            std::ptr::null_mut(),
+        )
+    };
+    if open_ok == 0 {
+        return Err(format!("Nao foi possivel abrir a impressora {printer_name}."));
     }
 
-    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-    if stderr.is_empty() {
-        return Err("Falha ao imprimir na impressora padrão.".to_string());
+    let doc_info = DOC_INFO_1W {
+        pDocName: doc_name.as_ptr() as *mut u16,
+        pOutputFile: std::ptr::null_mut(),
+        pDatatype: raw_type.as_ptr() as *mut u16,
+    };
+
+    let job_started = unsafe { StartDocPrinterW(printer_handle, 1, &doc_info) };
+    if job_started == 0 {
+        unsafe {
+            ClosePrinter(printer_handle);
+        }
+        return Err(format!("Nao foi possivel iniciar a impressao em {printer_name}."));
     }
 
-    Err(stderr)
+    let page_started = unsafe { StartPagePrinter(printer_handle) };
+    if page_started == 0 {
+        unsafe {
+            EndDocPrinter(printer_handle);
+            ClosePrinter(printer_handle);
+        }
+        return Err(format!("Nao foi possivel preparar a pagina na impressora {printer_name}."));
+    }
+
+    let mut bytes_written = 0u32;
+    let write_ok = unsafe {
+        WritePrinter(
+            printer_handle,
+            bytes.as_ptr() as *const _,
+            bytes.len() as u32,
+            &mut bytes_written,
+        )
+    };
+
+    unsafe {
+        EndPagePrinter(printer_handle);
+        EndDocPrinter(printer_handle);
+        ClosePrinter(printer_handle);
+    }
+
+    if write_ok == 0 || bytes_written != bytes.len() as u32 {
+        return Err(format!("Nao foi possivel enviar o cupom completo para {printer_name}."));
+    }
+
+    Ok(())
+}
+
+#[cfg(target_os = "windows")]
+fn to_wide(value: &str) -> Vec<u16> {
+    value.encode_utf16().chain(std::iter::once(0)).collect()
+}
+
+#[cfg(target_os = "windows")]
+fn get_default_printer_windows() -> Result<String, String> {
+    let mut needed = 0u32;
+    unsafe {
+        GetDefaultPrinterW(std::ptr::null_mut(), &mut needed);
+    }
+
+    if needed == 0 {
+        return Err("Nao foi possivel descobrir a impressora padrao do Windows.".to_string());
+    }
+
+    let mut buffer = vec![0u16; needed as usize];
+    let ok = unsafe { GetDefaultPrinterW(buffer.as_mut_ptr(), &mut needed) };
+    if ok == 0 {
+        return Err("Nao foi possivel ler a impressora padrao do Windows.".to_string());
+    }
+
+    let end = buffer.iter().position(|value| *value == 0).unwrap_or(buffer.len());
+    String::from_utf16(&buffer[..end])
+        .map_err(|error| format!("Falha ao converter nome da impressora padrao: {error}"))
 }
 
 #[cfg(target_os = "macos")]
@@ -526,7 +542,7 @@ mod tests {
     #[test]
     fn windows_payload_normalizes_line_endings() {
         let payload = build_windows_receipt_payload("Linha 1\nLinha 2", false);
-        assert_eq!(payload, b"Linha 1\r\nLinha 2\r\n");
+        assert_eq!(payload, b"\r\n\r\nLinha 1\r\nLinha 2\r\n\r\n\r\n\r\n");
     }
 
     #[test]

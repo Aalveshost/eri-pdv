@@ -1135,7 +1135,7 @@ export default function PDV() {
       }
 
       if (e.key === "Enter" && recentSales[selectedRecentSaleIndex]) {
-        void openRecentPrintConfirm(recentSales[selectedRecentSaleIndex]);
+        void handleManualPrintSale(recentSales[selectedRecentSaleIndex]);
       }
     };
 
@@ -1849,7 +1849,7 @@ export default function PDV() {
               <div className="flex items-center justify-between mb-5">
                 <div>
                   <h3 className="text-xl font-black italic text-luxury-orange uppercase">Últimas Vendas</h3>
-                  <p className="text-white/30 text-xs mt-1">Escolha uma venda e pressione ENTER para imprimir 1 via.</p>
+                  <p className="text-white/30 text-xs mt-1">Escolha uma venda e pressione ENTER para imprimir direto.</p>
                 </div>
                 <button onClick={closeRecentPrintModal} className="text-white/40 hover:text-white transition-colors">
                   <X size={20} />
@@ -1878,7 +1878,7 @@ export default function PDV() {
                           key={sale.id}
                           type="button"
                           onClick={() => setSelectedRecentSaleIndex(index)}
-                          onDoubleClick={() => { void openRecentPrintConfirm(sale); }}
+                          onDoubleClick={() => { void handleManualPrintSale(sale); }}
                           className={`grid w-full grid-cols-[100px_190px_1fr_120px] gap-3 px-4 py-3 text-left border-b border-white/5 transition-all ${
                             canceled
                               ? selected
@@ -1902,7 +1902,7 @@ export default function PDV() {
 
               <div className="mt-4 flex items-center justify-between text-[10px] uppercase tracking-widest text-white/30 font-bold">
                 <span>↑↓ Navegar</span>
-                <span>Enter Confirmar</span>
+                <span>Enter Imprimir</span>
                 <span className="text-luxury-orange">F3 Cancelar Venda</span>
                 <span>Esc Fechar</span>
               </div>
