@@ -1,6 +1,19 @@
 name: Build Windows EXE
 
 on:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/windows-exe.yml"
+      - "package.json"
+      - "package-lock.json"
+      - "vite.config.ts"
+      - "tsconfig.json"
+      - "tsconfig.node.json"
+      - "index.html"
+      - "src/**"
+      - "src-tauri/**"
   workflow_dispatch:
 
 jobs:
