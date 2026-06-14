@@ -18,6 +18,15 @@ on:
 
 jobs:
   build-windows:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-pc-windows-msvc
+            artifact_name: windows-exe-64-bit
+          - target: i686-pc-windows-msvc
+            artifact_name: windows-exe-32-bit
+
     runs-on: windows-latest
 
     steps:
@@ -32,6 +41,8 @@ jobs:
 
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc,i686-pc-windows-msvc
 
       - name: Install frontend dependencies
         run: npm ci
@@ -41,14 +52,14 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          args: --target x86_64-pc-windows-msvc
+          args: --target ${{ matrix.target }}
 
       - name: Upload Windows artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: windows-exe-bundle
+          name: ${{ matrix.artifact_name }}
           if-no-files-found: error
           path: |
-            src-tauri/target/x86_64-pc-windows-msvc/release/*.exe
-            src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe
-            src-tauri/target/x86_64-pc-windows-msvc/release/bundle/msi/*.msi
+            src-tauri/target/${{ matrix.target }}/release/*.exe
+            src-tauri/target/${{ matrix.target }}/release/bundle/nsis/*.exe
+            src-tauri/target/${{ matrix.target }}/release/bundle/msi/*.msi

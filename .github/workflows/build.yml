@@ -3,6 +3,16 @@ on:
   push:
     branches:
       - main
+    paths:
+      - ".github/workflows/build.yml"
+      - "package.json"
+      - "package-lock.json"
+      - "vite.config.ts"
+      - "tsconfig.json"
+      - "tsconfig.node.json"
+      - "index.html"
+      - "src/**"
+      - "src-tauri/**"
 
 jobs:
   publish:
@@ -12,14 +22,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - platform: "macos-latest"
-            args: "--target aarch64-apple-darwin"
-          - platform: "macos-latest"
-            args: "--target x86_64-apple-darwin"
-          - platform: "ubuntu-22.04"
-            args: ""
           - platform: "windows-latest"
-            args: ""
+            args: "--target x86_64-pc-windows-msvc"
+          - platform: "windows-latest"
+            args: "--target i686-pc-windows-msvc"
 
     runs-on: ${{ matrix.platform }}
     steps:
@@ -33,16 +39,10 @@ jobs:
       - name: install Rust stable
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
-
-      - name: install dependencies (ubuntu only)
-        if: matrix.platform == 'ubuntu-22.04'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+          targets: x86_64-pc-windows-msvc,i686-pc-windows-msvc
 
       - name: install frontend dependencies
-        run: npm install
+        run: npm ci
 
       - uses: tauri-apps/tauri-action@v0
         env:
