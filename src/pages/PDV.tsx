@@ -382,9 +382,8 @@ export default function PDV() {
     const prazoLabel = sale.cliente_id && sale.cliente_nome
       ? `${sale.cliente_id} - ${sale.cliente_nome}`
       : undefined;
-    const hasPrazo = paymentEntries.some((entry) => entry.method === "prazo");
-    const paymentDetails = paymentEntries.length > 1 || hasPrazo
-      ? buildPaymentDetailLines(paymentEntries, { prazoLabel })
+    const paymentDetails = paymentEntries.length > 0
+      ? buildPaymentDetailLines(paymentEntries, { prazoLabel, total: sale.total_venda })
       : undefined;
     return buildHistoricoPrintText({
       titulo: config.nomeLoja,

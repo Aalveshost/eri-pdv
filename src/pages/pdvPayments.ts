@@ -7,6 +7,7 @@ export interface PaymentEntryInput {
 
 interface PaymentDetailOptions {
   prazoLabel?: string;
+  total?: number;
 }
 
 export interface PaymentEntry extends PaymentEntryInput {
@@ -91,11 +92,21 @@ export function mapSalePaymentRows(rows: SalePaymentRow[]): PaymentEntry[] {
 }
 
 export function buildPaymentDetailLines(entries: PaymentEntryInput[], options: PaymentDetailOptions = {}) {
-  return normalizePaymentEntries(entries).map((entry) => {
+  const normalized = normalizePaymentEntries(entries);
+  const lines = normalized.map((entry) => {
     if (entry.method === "prazo" && options.prazoLabel) {
       return `Crediario: ${options.prazoLabel}`;
     }
 
     return `${getPaymentMethodLabel(entry.method)}: R$ ${entry.amount.toFixed(2).replace(".", ",")}`;
   });
+
+  if (typeof options.total === "number") {
+    const troco = getCheckoutPaymentsSummary(options.total, normalized).troco;
+    if (troco > 0) {
+      lines.push(`Troco: R$ ${troco.toFixed(2).replace(".", ",")}`);
+    }
+  }
+
+  return lines;
 }

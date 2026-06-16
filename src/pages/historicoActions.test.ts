@@ -24,6 +24,27 @@ describe("historico print text", () => {
     expect(text).toContain("- Debito: R$ 25,02");
   });
 
+  it("prints the payment block for single-payment sales too", () => {
+    const text = buildHistoricoPrintText({
+      titulo: "Venda #11",
+      subtitulo: "Pagamento simples",
+      dataVenda: "04/06/2026 14:05",
+      total: 13.5,
+      itens: [
+        {
+          descricao: "Sprite Lata 350ml",
+          quantidade: 1,
+          valorUnitario: 5.5,
+          valorTotal: 5.5,
+        },
+      ],
+      paymentDetails: ["Pix: R$ 13,50"],
+    });
+
+    expect(text).toContain("Pagamento:");
+    expect(text).toContain("- Pix: R$ 13,50");
+  });
+
   it("uses the wider 80mm layout with a fixed header and aligned columns", () => {
     const text = buildHistoricoPrintText({
       titulo: "John Salgados",

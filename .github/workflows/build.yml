@@ -16,6 +16,12 @@ on:
 
 jobs:
   publish:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: i686-pc-windows-msvc
+          - target: x86_64-pc-windows-msvc
     permissions:
       contents: write
     runs-on: windows-latest
@@ -30,7 +36,7 @@ jobs:
       - name: install Rust stable
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: x86_64-pc-windows-msvc
+          targets: ${{ matrix.target }}
 
       - name: install frontend dependencies
         run: npm ci
@@ -44,4 +50,4 @@ jobs:
           releaseBody: "Build automático gerado pelo GitHub Actions."
           releaseDraft: true
           prerelease: false
-          args: --target x86_64-pc-windows-msvc
+          args: --target ${{ matrix.target }}

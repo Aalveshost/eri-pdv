@@ -533,9 +533,8 @@ export default function Historico() {
         const prazoLabel = venda.cliente_id && venda.cliente_nome
           ? `${venda.cliente_id} - ${venda.cliente_nome}`
           : undefined;
-        const hasPrazo = paymentEntries.some((entry) => entry.method === "prazo");
-        const paymentDetails = paymentEntries.length > 1 || hasPrazo
-          ? buildPaymentDetailLines(paymentEntries, { prazoLabel })
+        const paymentDetails = paymentEntries.length > 0
+          ? buildPaymentDetailLines(paymentEntries, { prazoLabel, total: venda.total_venda })
           : undefined;
         await invoke("imprimir_padrao_direto", {
           nome: `venda-${venda.id}.txt`,

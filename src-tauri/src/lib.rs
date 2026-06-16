@@ -344,7 +344,7 @@ fn build_windows_receipt_payload(conteudo: &str, should_cut: bool) -> Vec<u8> {
         payload.extend_from_slice(b"\r\n");
     }
 
-    payload.extend_from_slice(b"\r\n\r\n\r\n\r\n\r\n");
+    payload.extend_from_slice(b"\r\n\r\n\r\n\r\n\r\n\r\n\r\n");
 
     if should_cut {
         // ESC @ (init) + GS V 0 (full cut)
@@ -541,7 +541,7 @@ mod tests {
     #[test]
     fn windows_payload_normalizes_line_endings() {
         let payload = build_windows_receipt_payload("Linha 1\nLinha 2", false);
-        assert_eq!(payload, b"Linha 1\r\nLinha 2\r\n\r\n\r\n\r\n\r\n\r\n");
+        assert_eq!(payload, b"Linha 1\r\nLinha 2\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n");
     }
 
     #[test]

@@ -55,6 +55,15 @@ describe("pdv mixed payments", () => {
     ).toEqual(["Credito: R$ 10,00", "Debito: R$ 25,02"]);
   });
 
+  it("adds a troco line when cash exceeds the amount due", () => {
+    expect(
+      buildPaymentDetailLines(
+        [{ method: "dinheiro", amount: 20 }],
+        { total: 15 },
+      ),
+    ).toEqual(["Dinheiro: R$ 20,00", "Troco: R$ 5,00"]);
+  });
+
   it("keeps prazo inside mixed sales and labels it correctly", () => {
     expect(
       getResumoMetodoPagamento([
