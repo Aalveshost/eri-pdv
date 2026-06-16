@@ -64,6 +64,7 @@ interface RecentSale {
   metodo_pagamento: string;
   status?: string;
   data_venda: string;
+  cliente_id?: number | null;
   cliente_nome: string | null;
 }
 
@@ -79,7 +80,7 @@ interface PrintConfigWithStore extends PrintConfig {
 }
 
 interface PostFinalizePrintJob {
-  sale: Pick<RecentSale, "id" | "metodo_pagamento" | "cliente_nome" | "data_venda" | "total_venda">;
+  sale: Pick<RecentSale, "id" | "metodo_pagamento" | "cliente_id" | "cliente_nome" | "data_venda" | "total_venda">;
   itens: Array<{ descricao: string; quantidade: number; valorUnitario: number; valorTotal: number }>;
   config: PrintConfigWithStore;
   copies: number;
@@ -370,7 +371,7 @@ export default function PDV() {
   };
 
   const buildSalePrintContent = (
-    sale: Pick<RecentSale, "id" | "metodo_pagamento" | "cliente_nome" | "data_venda" | "total_venda">,
+    sale: Pick<RecentSale, "id" | "metodo_pagamento" | "cliente_id" | "cliente_nome" | "data_venda" | "total_venda">,
     itens: Array<{ descricao: string; quantidade: number; valorUnitario: number; valorTotal: number }>,
     config: PrintConfigWithStore,
     pagamentos: SalePaymentRow[] | PaymentEntry[] = [],
@@ -378,7 +379,13 @@ export default function PDV() {
     const paymentEntries = pagamentos.length > 0 && "valor" in pagamentos[0]
       ? mapSalePaymentRows(pagamentos as SalePaymentRow[])
       : normalizePaymentEntries(pagamentos as PaymentEntry[]);
-    const paymentDetails = paymentEntries.length > 1 ? buildPaymentDetailLines(paymentEntries) : undefined;
+    const prazoLabel = sale.cliente_id && sale.cliente_nome
+      ? `${sale.cliente_id} - ${sale.cliente_nome}`
+      : undefined;
+    const hasPrazo = paymentEntries.some((entry) => entry.method === "prazo");
+    const paymentDetails = paymentEntries.length > 1 || hasPrazo
+      ? buildPaymentDetailLines(paymentEntries, { prazoLabel })
+      : undefined;
     return buildHistoricoPrintText({
       titulo: config.nomeLoja,
       subtitulo: `Venda #${sale.id}`,
@@ -390,7 +397,7 @@ export default function PDV() {
   };
 
   const printSaleDirect = async (
-    sale: Pick<RecentSale, "id" | "metodo_pagamento" | "cliente_nome" | "data_venda" | "total_venda">,
+    sale: Pick<RecentSale, "id" | "metodo_pagamento" | "cliente_id" | "cliente_nome" | "data_venda" | "total_venda">,
     itens: Array<{ descricao: string; quantidade: number; valorUnitario: number; valorTotal: number }>,
     config: PrintConfigWithStore,
     copies: number,
@@ -414,6 +421,17 @@ export default function PDV() {
          v.metodo_pagamento,
          v.status,
          v.data_venda,
+         CASE
+           WHEN LOWER(v.metodo_pagamento) = 'prazo' THEN (
+             SELECT vp.cliente_id
+             FROM vendas_prazo vp
+             WHERE vp.data_venda = v.data_venda
+               AND vp.total = v.total_venda
+             ORDER BY vp.id DESC
+             LIMIT 1
+           )
+           ELSE NULL
+         END as cliente_id,
          CASE
            WHEN LOWER(v.metodo_pagamento) = 'prazo' THEN (
              SELECT c.nome
@@ -1538,6 +1556,7 @@ export default function PDV() {
               sale: {
                 id: vendaId,
                 metodo_pagamento: metodoResumo,
+                cliente_id: clienteId ?? null,
                 cliente_nome: clienteNomeSnapshot,
                 data_venda: isoDate,
                 total_venda: total,

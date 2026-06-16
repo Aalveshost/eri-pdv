@@ -15,6 +15,7 @@ interface Venda {
   metodo_pagamento: string;
   status?: string;
   data_venda: string;
+  cliente_id: number | null;
   cliente_nome: string | null;
 }
 
@@ -260,6 +261,17 @@ export default function Historico() {
          v.metodo_pagamento,
          v.status,
          v.data_venda,
+         CASE
+           WHEN LOWER(v.metodo_pagamento) = 'prazo' THEN (
+             SELECT vp.cliente_id
+             FROM vendas_prazo vp
+             WHERE vp.data_venda = v.data_venda
+               AND vp.total = v.total_venda
+             ORDER BY vp.id DESC
+             LIMIT 1
+           )
+           ELSE NULL
+         END as cliente_id,
          CASE
            WHEN LOWER(v.metodo_pagamento) = 'prazo' THEN (
              SELECT c.nome
@@ -518,7 +530,13 @@ export default function Historico() {
           loadVendaPaymentsForVenda(target.id),
         ]);
         const paymentEntries = mapSalePaymentRows(pagamentos);
-        const paymentDetails = paymentEntries.length > 1 ? buildPaymentDetailLines(paymentEntries) : undefined;
+        const prazoLabel = venda.cliente_id && venda.cliente_nome
+          ? `${venda.cliente_id} - ${venda.cliente_nome}`
+          : undefined;
+        const hasPrazo = paymentEntries.some((entry) => entry.method === "prazo");
+        const paymentDetails = paymentEntries.length > 1 || hasPrazo
+          ? buildPaymentDetailLines(paymentEntries, { prazoLabel })
+          : undefined;
         await invoke("imprimir_padrao_direto", {
           nome: `venda-${venda.id}.txt`,
           conteudo: buildHistoricoPrintText({
@@ -555,6 +573,7 @@ export default function Historico() {
               valorUnitario: item.quantidade > 0 ? item.valor_total / item.quantidade : item.valor_total,
               valorTotal: item.valor_total,
             })),
+            paymentDetails: [`Crediario: ${venda.cliente_id} - ${venda.cliente_nome}`],
           }, paperWidth),
           copias: 1,
           cortar: false,

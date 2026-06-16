@@ -5,6 +5,10 @@ export interface PaymentEntryInput {
   amount: number;
 }
 
+interface PaymentDetailOptions {
+  prazoLabel?: string;
+}
+
 export interface PaymentEntry extends PaymentEntryInput {
   order: number;
 }
@@ -86,6 +90,12 @@ export function mapSalePaymentRows(rows: SalePaymentRow[]): PaymentEntry[] {
   );
 }
 
-export function buildPaymentDetailLines(entries: PaymentEntryInput[]) {
-  return normalizePaymentEntries(entries).map((entry) => `${getPaymentMethodLabel(entry.method)}: R$ ${entry.amount.toFixed(2).replace(".", ",")}`);
+export function buildPaymentDetailLines(entries: PaymentEntryInput[], options: PaymentDetailOptions = {}) {
+  return normalizePaymentEntries(entries).map((entry) => {
+    if (entry.method === "prazo" && options.prazoLabel) {
+      return `Crediario: ${options.prazoLabel}`;
+    }
+
+    return `${getPaymentMethodLabel(entry.method)}: R$ ${entry.amount.toFixed(2).replace(".", ",")}`;
+  });
 }

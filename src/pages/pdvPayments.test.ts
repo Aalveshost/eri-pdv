@@ -71,6 +71,18 @@ describe("pdv mixed payments", () => {
     ).toEqual(["Credito: R$ 10,00", "A Prazo: R$ 25,02"]);
   });
 
+  it("uses the cliente identification for prazo receipt lines when provided", () => {
+    expect(
+      buildPaymentDetailLines(
+        [
+          { method: "credito", amount: 10 },
+          { method: "prazo", amount: 25.02 },
+        ],
+        { prazoLabel: "15 - Joao Silva" },
+      ),
+    ).toEqual(["Credito: R$ 10,00", "Crediario: 15 - Joao Silva"]);
+  });
+
   it("drops zero or invalid launches before persisting", () => {
     expect(
       normalizePaymentEntries([
