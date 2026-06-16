@@ -20,11 +20,11 @@ describe("historico print text", () => {
     });
 
     expect(text).toContain("Pagamento:");
-    expect(text).toContain("Credito: R$ 10,00");
-    expect(text).toContain("Debito: R$ 25,02");
+    expect(text).toContain("- Credito: R$ 10,00");
+    expect(text).toContain("- Debito: R$ 25,02");
   });
 
-  it("uses the wider 80mm layout to keep price columns on one aligned line", () => {
+  it("uses the wider 80mm layout with a fixed header and aligned columns", () => {
     const text = buildHistoricoPrintText({
       titulo: "John Salgados",
       subtitulo: "Venda #360",
@@ -41,14 +41,18 @@ describe("historico print text", () => {
       paymentDetails: ["Dinheiro: R$ 8,00", "Credito: R$ 8,00"],
     }, 80);
 
+    expect(text.startsWith("\nJohn Salgados")).toBe(true);
     expect(text).toContain("John Salgados");
     expect(text).toContain("Venda #360");
     expect(text).toContain("Data: 12/06/2026 - 14:56:38");
-    expect(text).toMatch(/1x Coxinha Costela Requeij[a-z. ]+8,00\s+8,00/);
+    expect(text).toContain("QTD ITEM");
+    expect(text).toContain("UNIT");
+    expect(text).toContain("TOTAL");
+    expect(text).toMatch(/1x\s+Coxinha Costela Requeij[a-z. ]+8,00\s+8,00/);
     expect(text).toContain("Pagamento:");
-    expect(text).toContain("Dinheiro: R$ 8,00");
-    expect(text).toContain("Credito: R$ 8,00");
-    expect(text).toMatch(/Pagamento:\nDinheiro: R\$ 8,00\nCredito: R\$ 8,00\n-+\nTotal: R\$ 16,00/);
+    expect(text).toContain("- Dinheiro: R$ 8,00");
+    expect(text).toContain("- Credito: R$ 8,00");
+    expect(text).toMatch(/Pagamento:\n- Dinheiro: R\$ 8,00\n- Credito: R\$ 8,00\n-+\nTotal: R\$ 16,00/);
   });
 
   it("truncates long item names in the 80mm one-line layout", () => {
@@ -68,6 +72,6 @@ describe("historico print text", () => {
     }, 80);
 
     expect(text).toContain("...");
-    expect(text).toMatch(/1x Coxinha Costela Re\w+\.\.\.\s+8,00\s+8,00/);
+    expect(text).toMatch(/1x\s+Coxinha Costela Re[a-zA-Z ]+\.\.\.\s+8,00\s+8,00/);
   });
 });

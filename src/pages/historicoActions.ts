@@ -104,24 +104,28 @@ export function buildHistoricoPrintHtml(payload: HistoricoPrintPayload) {
 export function buildHistoricoPrintText(payload: HistoricoPrintPayload, paperWidth: HistoricoPaperWidth = 58) {
   const lineWidth = getReceiptLineWidthChars(paperWidth);
   const sep = "-".repeat(lineWidth);
+  const itemHeader = paperWidth === 80 ? format80mmHeader(lineWidth) : null;
   const paymentDetails = payload.paymentDetails && payload.paymentDetails.length > 0
-    ? ["Pagamento:", ...payload.paymentDetails].join("\n")
+    ? ["Pagamento:", ...payload.paymentDetails.map((detail) => `- ${detail}`)].join("\n")
     : null;
   const itens = payload.itens.length > 0
     ? payload.itens.map((item) => formatPrintItem(item, paperWidth, lineWidth)).join("\n")
     : "Nenhum item encontrado";
 
   return [
+    "",
     payload.titulo,
     payload.subtitulo,
     `Data: ${payload.dataVenda}`,
     sep,
+    itemHeader,
+    itemHeader ? sep : null,
     itens,
     sep,
     paymentDetails,
     paymentDetails ? sep : null,
     `Total: R$ ${formatMoney(payload.total)}`,
-  ].filter(Boolean).join("\n");
+  ].filter((line) => line !== null && line !== undefined).join("\n");
 }
 
 function formatPrintItem(
@@ -130,19 +134,48 @@ function formatPrintItem(
   lineWidth: number,
 ) {
   if (paperWidth === 80) {
+    const { qtyWidth, itemWidth, unitWidth, totalWidth } = get80mmColumnWidths(lineWidth);
+    const quantity = `${item.quantidade}x`.padEnd(qtyWidth);
     const unit = formatMoney(item.valorUnitario ?? item.valorTotal);
     const total = formatMoney(item.valorTotal);
-    const gap = "   ";
-    const priceWidth = 7;
-    const itemWidth = Math.max(1, lineWidth - (priceWidth * 2) - (gap.length * 2));
-    const description = truncateText(`${item.quantidade}x ${item.descricao}`, itemWidth);
-    return `${description.padEnd(itemWidth)}${gap}${unit.padStart(priceWidth)}${gap}${total.padStart(priceWidth)}`;
+    const description = truncateText(item.descricao, itemWidth);
+    return [
+      quantity,
+      description.padEnd(itemWidth),
+      unit.padStart(unitWidth),
+      total.padStart(totalWidth),
+    ].join(" ");
   }
 
   const unit = `Unit.: R$ ${formatMoney(item.valorUnitario ?? item.valorTotal)}`;
   const total = `Total: R$ ${formatMoney(item.valorTotal)}`;
   const descriptionLines = wrapText(`${item.quantidade}x ${item.descricao}`, lineWidth);
   return `${descriptionLines.join("\n")}\n  ${unit} | ${total}`;
+}
+
+function format80mmHeader(lineWidth: number) {
+  const { qtyWidth, itemWidth, unitWidth, totalWidth } = get80mmColumnWidths(lineWidth);
+  return [
+    "QTD".padEnd(qtyWidth),
+    "ITEM".padEnd(itemWidth),
+    "UNIT".padStart(unitWidth),
+    "TOTAL".padStart(totalWidth),
+  ].join(" ");
+}
+
+function get80mmColumnWidths(lineWidth: number) {
+  const qtyWidth = 3;
+  const unitWidth = 6;
+  const totalWidth = 6;
+  const gapsWidth = 3;
+  const itemWidth = Math.max(1, lineWidth - qtyWidth - unitWidth - totalWidth - gapsWidth);
+
+  return {
+    qtyWidth,
+    itemWidth,
+    unitWidth,
+    totalWidth,
+  };
 }
 
 function truncateText(text: string, maxWidth: number) {
