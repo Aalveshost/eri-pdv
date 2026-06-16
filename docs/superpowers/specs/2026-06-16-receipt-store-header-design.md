@@ -46,6 +46,8 @@ Regras:
 No topo do cupom, usar o seguinte bloco:
 
 ```text
+[espaco superior extra]
+
 Nome da loja
 Rua: ...
 Celular: ...
@@ -57,11 +59,13 @@ Data: ...
 
 Regras:
 
+- Inserir espaco superior extra equivalente a aproximadamente `1,5 cm` antes da primeira linha impressa.
 - `nome_loja` continua sendo a primeira linha.
 - `Rua`, `Celular` e `Instagram` aparecem apenas quando seus respectivos valores estiverem preenchidos.
 - Entre o bloco da loja e as linhas `Venda` / `Data`, inserir apenas uma linha em branco.
 - Nao inserir linha pontilhada entre os dados da loja e o identificador da venda.
-- O restante do cupom permanece como hoje.
+- Na parte final, inserir espaco inferior extra equivalente a aproximadamente `1,5 cm` apos a mensagem de encerramento.
+- O restante do cupom permanece como hoje, com os ajustes abaixo no fechamento.
 
 ### Formatting details
 
@@ -72,6 +76,35 @@ Regras:
 - O formatter deve evitar linhas vazias extras quando um ou mais campos estiverem ausentes.
 - O comportamento deve valer para impressao direta no PDV e reimpressao pelo Historico.
 
+### Receipt footer
+
+Na parte final do cupom, usar a seguinte estrutura:
+
+```text
+--------------------------------
+Total de itens: ...
+
+Pagamento:
+- ...
+Total: R$ ...
+--------------------------------
+      Obrigado pela preferencia!
+           Volte sempre!
+```
+
+Regras:
+
+- `Total de itens:` deve mostrar o total de unidades vendidas, ou seja, a soma de `quantidade` de todos os itens do cupom.
+- `Pagamento:` continua listando um ou mais metodos conforme as regras ja definidas anteriormente.
+- Em pagamento com dinheiro, manter tambem a linha de troco quando houver.
+- Em pagamento de crediario, manter o formato `Crediario: idcliente - nome_cliente`.
+- O `Total: R$ ...` deve ficar dentro do mesmo bloco visual de pagamento, sem uma linha pontilhada separando pagamentos e total.
+- Depois do bloco de pagamento e total, inserir uma linha pontilhada.
+- A mensagem final deve ser exatamente:
+  - `Obrigado pela preferencia!`
+  - `Volte sempre!`
+- As duas linhas da mensagem final devem ser centralizadas dentro da largura util do cupom.
+
 ## Testing
 
 Cobrir:
@@ -79,6 +112,10 @@ Cobrir:
 - Cupom com todos os campos preenchidos.
 - Cupom com apenas `nome_loja`.
 - Cupom com combinacoes parciais, garantindo ausencia de linhas extras e ausencia de pontilhado entre loja e venda.
+- Cupom com validacao de espaco superior e inferior extra no layout final.
+- Cupom com `Total de itens` baseado na soma das quantidades.
+- Cupom com total permanecendo dentro do bloco de pagamento, sem pontilhado intermediario.
+- Cupom com mensagem final centralizada.
 - Persistencia e leitura dos novos campos em `Configuracoes.tsx`.
 
 ## Risks
