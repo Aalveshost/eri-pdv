@@ -77,6 +77,9 @@ interface RecentSaleItem {
 
 interface PrintConfigWithStore extends PrintConfig {
   nomeLoja: string;
+  enderecoLoja?: string;
+  celularLoja?: string;
+  instagramLoja?: string;
 }
 
 interface PostFinalizePrintJob {
@@ -117,6 +120,11 @@ function formatSaleDateTime(value: string) {
     minute: "2-digit",
     second: "2-digit",
   });
+}
+
+function normalizeOptionalStoreField(value: unknown) {
+  const text = typeof value === "string" ? value.trim() : "";
+  return text || undefined;
 }
 
 function getSalePaymentLabel(sale: Pick<RecentSale, "metodo_pagamento" | "cliente_nome">) {
@@ -353,6 +361,9 @@ export default function PDV() {
     if (!db) {
       return {
         nomeLoja: "Salgados Pro",
+        enderecoLoja: undefined,
+        celularLoja: undefined,
+        instagramLoja: undefined,
         autoPrintEnabled: false,
         autoPrintCopies: 1,
         cutPaperEnabled: false,
@@ -361,11 +372,14 @@ export default function PDV() {
     }
 
     const rows: any[] = await db.select(
-      "SELECT nome_loja, impressao_automatica, impressao_vias, impressao_corte, impressao_largura_mm FROM configuracoes WHERE id = 1",
+      "SELECT nome_loja, endereco_loja, celular_loja, instagram_loja, impressao_automatica, impressao_vias, impressao_corte, impressao_largura_mm FROM configuracoes WHERE id = 1",
     );
     const row = rows[0] || {};
     return {
       nomeLoja: row.nome_loja || "Salgados Pro",
+      enderecoLoja: normalizeOptionalStoreField(row.endereco_loja),
+      celularLoja: normalizeOptionalStoreField(row.celular_loja),
+      instagramLoja: normalizeOptionalStoreField(row.instagram_loja),
       ...normalizePrintConfigRow(row),
     };
   };
@@ -392,6 +406,9 @@ export default function PDV() {
       total: sale.total_venda,
       itens,
       paymentDetails,
+      enderecoLoja: config.enderecoLoja,
+      celularLoja: config.celularLoja,
+      instagramLoja: config.instagramLoja,
     }, config.paperWidth);
   };
 

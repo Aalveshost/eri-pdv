@@ -24,6 +24,7 @@ export async function processarVendaFIFO(
   dataReferencia?: string, // Formato YYYY-MM-DD
   pagamentos: VendaPagamentoInput[] = []
 ) {
+  await db.execute("BEGIN");
   try {
     const resVenda = await db.execute(
       "INSERT INTO vendas (total_venda, metodo_pagamento, data_venda) VALUES ($1, $2, $3)",
@@ -89,8 +90,14 @@ export async function processarVendaFIFO(
       }
     }
 
+    await db.execute("COMMIT");
     return { success: true, vendaId };
   } catch (err) {
+    try {
+      await db.execute("ROLLBACK");
+    } catch (rollbackErr) {
+      console.error("Erro ao desfazer transacao da venda:", rollbackErr);
+    }
     console.error("Erro ao processar venda integrada:", err);
     throw err;
   }

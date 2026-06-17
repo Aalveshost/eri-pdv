@@ -44,6 +44,11 @@ interface VendaPrazoRow {
   cliente_nome: string;
 }
 
+function normalizeOptionalStoreField(value: unknown) {
+  const text = typeof value === "string" ? value.trim() : "";
+  return text || undefined;
+}
+
 interface VendaPrazoItem {
   id: number;
   venda_id?: number;
@@ -518,8 +523,14 @@ export default function Historico() {
     setPrintToast("Imprimindo...");
     try {
       const configRows: any[] = await db.select(
-        "SELECT impressao_largura_mm FROM configuracoes WHERE id = 1",
+        "SELECT nome_loja, endereco_loja, celular_loja, instagram_loja, impressao_largura_mm FROM configuracoes WHERE id = 1",
       );
+      const storeConfig = {
+        nomeLoja: configRows[0]?.nome_loja || "Salgados Pro",
+        enderecoLoja: normalizeOptionalStoreField(configRows[0]?.endereco_loja),
+        celularLoja: normalizeOptionalStoreField(configRows[0]?.celular_loja),
+        instagramLoja: normalizeOptionalStoreField(configRows[0]?.instagram_loja),
+      };
       const paperWidth = Number(configRows[0]?.impressao_largura_mm) === 80 ? 80 : 58;
 
       if (target.kind === "todas") {
@@ -539,8 +550,8 @@ export default function Historico() {
         await invoke("imprimir_padrao_direto", {
           nome: `venda-${venda.id}.txt`,
           conteudo: buildHistoricoPrintText({
-            titulo: `Venda #${venda.id}`,
-            subtitulo: "",
+            titulo: storeConfig.nomeLoja,
+            subtitulo: `Venda #${venda.id}`,
             dataVenda: isoToBr(venda.data_venda),
             total: venda.total_venda,
             itens: itens.map(item => ({
@@ -550,6 +561,9 @@ export default function Historico() {
               valorTotal: item.quantidade * item.preco_unitario,
             })),
             paymentDetails,
+            enderecoLoja: storeConfig.enderecoLoja,
+            celularLoja: storeConfig.celularLoja,
+            instagramLoja: storeConfig.instagramLoja,
           }, paperWidth),
           copias: 1,
           cortar: false,
@@ -562,8 +576,8 @@ export default function Historico() {
         await invoke("imprimir_padrao_direto", {
           nome: `venda-prazo-${venda.id}.txt`,
           conteudo: buildHistoricoPrintText({
-            titulo: `Venda a Prazo #${venda.id}`,
-            subtitulo: venda.cliente_nome,
+            titulo: storeConfig.nomeLoja,
+            subtitulo: `Venda a Prazo #${venda.id}`,
             dataVenda: isoToBr(venda.data_venda),
             total: venda.total,
             itens: itens.map(item => ({
@@ -573,6 +587,9 @@ export default function Historico() {
               valorTotal: item.valor_total,
             })),
             paymentDetails: [`Crediario: ${venda.cliente_id} - ${venda.cliente_nome}`],
+            enderecoLoja: storeConfig.enderecoLoja,
+            celularLoja: storeConfig.celularLoja,
+            instagramLoja: storeConfig.instagramLoja,
           }, paperWidth),
           copias: 1,
           cortar: false,

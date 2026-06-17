@@ -17,6 +17,9 @@ export interface HistoricoPrintPayload {
   total: number;
   itens: HistoricoPrintItem[];
   paymentDetails?: string[];
+  enderecoLoja?: string;
+  celularLoja?: string;
+  instagramLoja?: string;
 }
 
 export type HistoricoPaperWidth = 58 | 80;
@@ -57,6 +60,11 @@ export function getHistoricoActionMeta(kind: HistoricoActionTargetKind, id: numb
 }
 
 export function buildHistoricoPrintHtml(payload: HistoricoPrintPayload) {
+  const storeMetaLines = [
+    payload.enderecoLoja?.trim() ? `Rua: ${payload.enderecoLoja.trim()}` : null,
+    payload.celularLoja?.trim() ? `Celular: ${payload.celularLoja.trim()}` : null,
+    payload.instagramLoja?.trim() ? `Instagram: ${payload.instagramLoja.trim()}` : null,
+  ].filter(Boolean);
   const itensRows = payload.itens.map((item) => `
     <tr>
       <td>${item.descricao}</td>
@@ -70,7 +78,8 @@ export function buildHistoricoPrintHtml(payload: HistoricoPrintPayload) {
     *{box-sizing:border-box;margin:0;padding:0}
     body{font-family:Arial,sans-serif;background:#fff;color:#111;padding:28px}
     h1{font-size:20px;font-weight:800;margin-bottom:4px}
-    .sub{font-size:12px;color:#555;margin-bottom:16px}
+    .store{font-size:12px;color:#333;line-height:1.4}
+    .sub{font-size:12px;color:#555;margin-top:16px}
     .meta{font-size:12px;color:#333;margin-bottom:16px}
     table{width:100%;border-collapse:collapse}
     th,td{padding:8px 6px;border-bottom:1px solid #ddd;font-size:12px}
@@ -81,6 +90,7 @@ export function buildHistoricoPrintHtml(payload: HistoricoPrintPayload) {
     @media print{.actions{display:none} body{padding:16px}}
   </style></head><body>
     <h1>${payload.titulo}</h1>
+    ${storeMetaLines.length > 0 ? `<p class="store">${storeMetaLines.join("<br/>")}</p>` : ""}
     <p class="sub">${payload.subtitulo}</p>
     <p class="meta">Data: ${payload.dataVenda}</p>
     <table>
@@ -104,17 +114,26 @@ export function buildHistoricoPrintHtml(payload: HistoricoPrintPayload) {
 export function buildHistoricoPrintText(payload: HistoricoPrintPayload, paperWidth: HistoricoPaperWidth = 58) {
   const lineWidth = getReceiptLineWidthChars(paperWidth);
   const sep = "-".repeat(lineWidth);
+  const topMargin = Array.from({ length: 5 }, () => "");
+  const bottomMargin = Array.from({ length: 5 }, () => "");
   const itemHeader = paperWidth === 80 ? format80mmHeader(lineWidth) : null;
-  const paymentDetails = payload.paymentDetails && payload.paymentDetails.length > 0
-    ? ["Pagamento:", ...payload.paymentDetails.map((detail) => `- ${detail}`)].join("\n")
-    : null;
+  const storeLines = buildStoreHeaderLines(payload);
+  const paymentLines = payload.paymentDetails && payload.paymentDetails.length > 0
+    ? ["Pagamento:", ...payload.paymentDetails.map((detail) => `- ${detail}`)]
+    : [];
   const itens = payload.itens.length > 0
     ? payload.itens.map((item) => formatPrintItem(item, paperWidth, lineWidth)).join("\n")
     : "Nenhum item encontrado";
+  const totalItems = payload.itens.reduce((sum, item) => sum + Math.max(0, Number(item.quantidade) || 0), 0);
+  const footerMessage = [
+    centerText("Obrigado pela preferencia!", lineWidth),
+    centerText("Volte sempre!", lineWidth),
+  ];
 
   return [
+    ...topMargin,
+    ...storeLines,
     "",
-    payload.titulo,
     payload.subtitulo,
     `Data: ${payload.dataVenda}`,
     sep,
@@ -122,10 +141,23 @@ export function buildHistoricoPrintText(payload: HistoricoPrintPayload, paperWid
     itemHeader ? sep : null,
     itens,
     sep,
-    paymentDetails,
-    paymentDetails ? sep : null,
+    `Total de itens: ${totalItems}`,
+    "",
+    ...paymentLines,
     `Total: R$ ${formatMoney(payload.total)}`,
+    sep,
+    ...footerMessage,
+    ...bottomMargin,
   ].filter((line) => line !== null && line !== undefined).join("\n");
+}
+
+function buildStoreHeaderLines(payload: HistoricoPrintPayload) {
+  return [
+    payload.titulo,
+    payload.enderecoLoja?.trim() ? `Rua: ${payload.enderecoLoja.trim()}` : null,
+    payload.celularLoja?.trim() ? `Celular: ${payload.celularLoja.trim()}` : null,
+    payload.instagramLoja?.trim() ? `Instagram: ${payload.instagramLoja.trim()}` : null,
+  ].filter((line): line is string => Boolean(line));
 }
 
 function formatPrintItem(
@@ -182,6 +214,12 @@ function truncateText(text: string, maxWidth: number) {
   if (text.length <= maxWidth) return text;
   if (maxWidth <= 3) return text.slice(0, maxWidth);
   return `${text.slice(0, maxWidth - 3).trimEnd()}...`;
+}
+
+function centerText(text: string, lineWidth: number) {
+  if (text.length >= lineWidth) return text;
+  const leftPadding = Math.floor((lineWidth - text.length) / 2);
+  return `${" ".repeat(leftPadding)}${text}`;
 }
 
 function wrapText(text: string, lineWidth: number) {

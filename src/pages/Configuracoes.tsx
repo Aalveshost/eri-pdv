@@ -22,6 +22,9 @@ export default function Configuracoes() {
     dias_alerta_validade: 5,
     caminho_backup_externo: "",
     nome_loja: "Salgados Pro",
+    endereco_loja: "",
+    celular_loja: "",
+    instagram_loja: "",
     frequencia_backup_dias: 7,
     senha: DEFAULT_ACCESS_PASSWORD,
     impressao_automatica: false,
@@ -33,6 +36,9 @@ export default function Configuracoes() {
   const [showSuccess, setShowSuccess] = useState(false);
 
   const fNomeRef = useRef<HTMLInputElement>(null);
+  const fEnderecoRef = useRef<HTMLInputElement>(null);
+  const fCelularRef = useRef<HTMLInputElement>(null);
+  const fInstagramRef = useRef<HTMLInputElement>(null);
   const fSenhaRef = useRef<HTMLInputElement>(null);
   const fCaminhoRef = useRef<HTMLInputElement>(null);
   const fFreqRef = useRef<HTMLSelectElement>(null);
@@ -45,8 +51,11 @@ export default function Configuracoes() {
   const fSalvarBtnRef = useRef<HTMLButtonElement>(null);
 
   const navMap: Record<string, any> = {
-    nome: { down: fSenhaRef, right: fCaminhoRef },
-    senha: { up: fNomeRef, right: fFreqRef, down: fBackupBtnRef },
+    nome: { down: fEnderecoRef, right: fCaminhoRef },
+    endereco: { up: fNomeRef, down: fCelularRef, right: fCaminhoRef },
+    celular: { up: fEnderecoRef, down: fInstagramRef, right: fCaminhoRef },
+    instagram: { up: fCelularRef, down: fSenhaRef, right: fCaminhoRef },
+    senha: { up: fInstagramRef, right: fFreqRef, down: fBackupBtnRef },
     caminho: { left: fNomeRef, down: fFreqRef },
     freq: { up: fCaminhoRef, left: fSenhaRef, down: fPrintAutoRef, right: fPrintAutoRef },
     print_auto: { up: fFreqRef, down: fPrintCopiesRef },
@@ -133,6 +142,9 @@ export default function Configuracoes() {
           dias_alerta_validade: res[0].dias_alerta_validade,
           caminho_backup_externo: res[0].caminho_backup_externo || "",
           nome_loja: res[0].nome_loja || "Salgados Pro",
+          endereco_loja: res[0].endereco_loja || "",
+          celular_loja: res[0].celular_loja || "",
+          instagram_loja: res[0].instagram_loja || "",
           frequencia_backup_dias: res[0].frequencia_backup_dias || 7,
           senha: normalizeStoredAccessPassword(res[0].senha),
           impressao_automatica: printConfig.autoPrintEnabled,
@@ -189,11 +201,14 @@ export default function Configuracoes() {
 
     try {
       await db.execute(
-        "UPDATE configuracoes SET dias_alerta_validade = $1, caminho_backup_externo = $2, nome_loja = $3, frequencia_backup_dias = $4, senha = $5, impressao_automatica = $6, impressao_vias = $7, impressao_corte = $8, impressao_largura_mm = $9 WHERE id = 1",
+        "UPDATE configuracoes SET dias_alerta_validade = $1, caminho_backup_externo = $2, nome_loja = $3, endereco_loja = $4, celular_loja = $5, instagram_loja = $6, frequencia_backup_dias = $7, senha = $8, impressao_automatica = $9, impressao_vias = $10, impressao_corte = $11, impressao_largura_mm = $12 WHERE id = 1",
         [
           form.dias_alerta_validade,
           form.caminho_backup_externo,
           form.nome_loja,
+          form.endereco_loja.trim(),
+          form.celular_loja.trim(),
+          form.instagram_loja.trim(),
           form.frequencia_backup_dias,
           form.senha,
           form.impressao_automatica ? 1 : 0,
@@ -282,6 +297,45 @@ export default function Configuracoes() {
                 value={form.nome_loja}
                 onChange={e => setForm({...form, nome_loja: e.target.value})}
                 onKeyDown={e => handleNav(e, 'nome')}
+              />
+            </label>
+
+            <label className="block">
+              <span className="text-xs uppercase tracking-widest text-white/40 font-bold mb-2 block">Endereco</span>
+              <input
+                ref={fEnderecoRef}
+                type="text"
+                placeholder="R. das Flores, 123"
+                className="luxury-input w-full h-12"
+                value={form.endereco_loja}
+                onChange={e => setForm({ ...form, endereco_loja: e.target.value })}
+                onKeyDown={e => handleNav(e, 'endereco')}
+              />
+            </label>
+
+            <label className="block">
+              <span className="text-xs uppercase tracking-widest text-white/40 font-bold mb-2 block">Celular</span>
+              <input
+                ref={fCelularRef}
+                type="text"
+                placeholder="(11) 9 9999-9999"
+                className="luxury-input w-full h-12"
+                value={form.celular_loja}
+                onChange={e => setForm({ ...form, celular_loja: e.target.value })}
+                onKeyDown={e => handleNav(e, 'celular')}
+              />
+            </label>
+
+            <label className="block">
+              <span className="text-xs uppercase tracking-widest text-white/40 font-bold mb-2 block">Instagram</span>
+              <input
+                ref={fInstagramRef}
+                type="text"
+                placeholder="@instagram"
+                className="luxury-input w-full h-12"
+                value={form.instagram_loja}
+                onChange={e => setForm({ ...form, instagram_loja: e.target.value })}
+                onKeyDown={e => handleNav(e, 'instagram')}
               />
             </label>
 

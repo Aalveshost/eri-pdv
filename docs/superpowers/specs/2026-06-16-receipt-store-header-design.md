@@ -59,12 +59,12 @@ Data: ...
 
 Regras:
 
-- Inserir espaco superior extra equivalente a aproximadamente `1,5 cm` antes da primeira linha impressa.
+- Inserir espaco superior extra equivalente a aproximadamente `2 cm` antes da primeira linha impressa.
 - `nome_loja` continua sendo a primeira linha.
 - `Rua`, `Celular` e `Instagram` aparecem apenas quando seus respectivos valores estiverem preenchidos.
 - Entre o bloco da loja e as linhas `Venda` / `Data`, inserir apenas uma linha em branco.
 - Nao inserir linha pontilhada entre os dados da loja e o identificador da venda.
-- Na parte final, inserir espaco inferior extra equivalente a aproximadamente `1,5 cm` apos a mensagem de encerramento.
+- Na parte final, inserir espaco inferior extra equivalente a aproximadamente `2 cm` apos a mensagem de encerramento.
 - O restante do cupom permanece como hoje, com os ajustes abaixo no fechamento.
 
 ### Formatting details
